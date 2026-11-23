@@ -65,6 +65,7 @@ export interface RosterInfo {
   deaths: number;
   bogs: number;
   ping: number;
+  bot: boolean;
 }
 
 const lerp = (a: number, b: number, f: number) => a + (b - a) * f;
@@ -170,7 +171,7 @@ export class Game {
   }
 
   private onRoster(r: RosterEntry[], khan: number) {
-    this.roster = new Map(r.map(([id, name, cls, score, kills, deaths, bogs, ping]) => [id, { id, name, cls, score, kills, deaths, bogs, ping }]));
+    this.roster = new Map(r.map(([id, name, cls, score, kills, deaths, bogs, ping, bot]) => [id, { id, name, cls, score, kills, deaths, bogs, ping, bot: !!bot }]));
     this.khan = khan;
     const me = this.roster.get(this.myId);
     if (me) this.cls = me.cls;

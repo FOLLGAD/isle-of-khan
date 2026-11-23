@@ -1,6 +1,6 @@
-import { CLASSES, isClassId, type ClassId } from '../shared/classes';
+import { CLASS_IDS, CLASSES, isClassId, type ClassId } from '../shared/classes';
 import {
-  CHAT_MAX, HURT, INTERMISSION_MS, NAME_MAX, PLAYER_HH, PLAYER_HW, RESPAWN_MS, ROUND_MS, SCORE, SIM_DT,
+  CHAT_MAX, HURT, INTERMISSION_MS, Key, NAME_MAX, PLAYER_HH, PLAYER_HW, RESPAWN_MS, ROUND_MS, SCORE, SIM_DT,
   SPAWN_SHIELD_MS, TILE,
 } from '../shared/constants';
 import { MAP, moveBox, randomSpot, shotBlocked, type GameMap } from '../shared/map';
@@ -9,6 +9,7 @@ import {
   type PlayerSnap, type ProjSnap, type RosterEntry, type RoundResult, type ServerMsg,
 } from '../shared/protocol';
 import { Act, newBody, packBody, stepPlayer, type Body, type Input } from '../shared/sim';
+import { BOT_NAMES, BotBrain } from './bot';
 
 export interface Player {
   id: number;
@@ -30,9 +31,13 @@ export interface Player {
   budget: number;
   ack: number;
   lastChat: number;
+  /** Set for computer-controlled players. */
+  bot: BotBrain | null;
+  /** Simulation time a bot has not turned into inputs yet. */
+  botAcc: number;
 }
 
-interface Mob {
+export interface Mob {
   id: number;
   x: number;
   y: number;
@@ -50,7 +55,7 @@ interface Mob {
   faceLeft: boolean;
 }
 
-interface Proj {
+export interface Proj {
   id: number;
   kind: ProjKind;
   owner: number;
@@ -62,7 +67,7 @@ interface Proj {
   ttl: number;
 }
 
-interface Bomb {
+export interface Bomb {
   id: number;
   owner: number;
   x: number;
@@ -72,7 +77,7 @@ interface Bomb {
   fuse: number;
 }
 
-interface Heart {
+export interface Heart {
   id: number;
   x: number;
   y: number;
@@ -101,6 +106,9 @@ const BOG = {
   attackCd: 900,
 };
 const HEAL = 25;
+/** Rooms are topped up with bots until there are this many fighters. */
+export const BOT_FILL = 6;
+const BOT_TAUNTS = ['For the Khan!', 'Back to the sea with you.', 'gg', 'Too slow!', 'The isle is mine.', 'Hah!'];
 /** Chest height above the feet, where projectiles start and blasts are measured to. */
 const CHEST = 44;
 /** Snapshots include entities this far (world px) from the receiving player. */
@@ -131,18 +139,19 @@ export class World {
   private heartTimer = 0;
   private rosterDirty = true;
   private rosterTimer = 0;
+  private botTimer = 0;
+  readonly map: GameMap = MAP;
+  private rand: () => number;
+  private botFill: number;
 
-  constructor(
-    private out: Outbox,
-    now: number,
-    private rand: () => number = Math.random,
-    private map: GameMap = MAP,
-  ) {
+  constructor(private out: Outbox, now: number, opts: { rand?: () => number; botFill?: number } = {}) {
     this.now = this.lastTick = now;
     this.phaseEndsAt = now + ROUND_MS;
+    this.rand = opts.rand ?? Math.random;
+    this.botFill = opts.botFill ?? BOT_FILL;
   }
 
-  join(rawName: unknown, rawCls: unknown): Player {
+  join(rawName: unknown, rawCls: unknown, bot = false): Player {
     let name = clean(rawName, NAME_MAX);
     if (!name) {
       const taken = new Set([...this.players.values()].map((p) => p.name));
@@ -154,7 +163,9 @@ export class World {
     const p: Player = {
       id: this.nextId++, name, cls, body: newBody(0, 0), hp: 0, alive: false, respawnAt: 0, shieldUntil: 0,
       hurtUntil: 0, score: 0, kills: 0, deaths: 0, bogs: 0, ping: 0, queue: [], budget: 0, ack: 0, lastChat: 0,
+      bot: null, botAcc: 0,
     };
+    if (bot) p.bot = new BotBrain(p.id);
     this.players.set(p.id, p);
     this.spawn(p);
     this.rosterDirty = true;
@@ -212,6 +223,7 @@ export class World {
     this.lastTick = this.now = now;
     if (now >= this.phaseEndsAt) this.phase === 'play' ? this.endRound() : this.startRound();
 
+    this.manageBots(dt);
     for (const p of this.players.values()) this.applyInputs(p, dt);
     if (this.phase === 'play') {
       this.tickProjectiles(dt);
@@ -304,9 +316,11 @@ export class World {
       } else {
         const def = p.cls === 'archer' ? ARROW : ORB;
         const kind = p.cls === 'archer' ? ProjKind.Arrow : ProjKind.Orb;
+        // Bows lose a little accuracy on the run.
+        const a = input.aim + (p.cls === 'archer' && b.moving ? (this.rand() - 0.5) * 0.08 : 0);
         this.projs.push({
           id: this.nextId++, kind, owner: p.id, seq: input.seq, x: b.x + ax * 24, y: cy + ay * 24,
-          vx: ax * def.speed, vy: ay * def.speed, ttl: def.ttl,
+          vx: Math.cos(a) * def.speed, vy: Math.sin(a) * def.speed, ttl: def.ttl,
         });
         this.emit(b.x, b.y, [Ev.Shoot, p.id, kind]);
       }
@@ -370,6 +384,9 @@ export class World {
     if (by && by !== t) {
       by.kills++;
       by.score += SCORE.kill + (wasKhan ? SCORE.khanBonus : 0);
+      if (by.bot && this.rand() < (wasKhan ? 0.6 : 0.12)) {
+        this.out.broadcast({ t: 'chat', from: by.name, m: BOT_TAUNTS[Math.floor(this.rand() * BOT_TAUNTS.length)] });
+      }
     } else if (by === t) {
       t.score = Math.max(0, t.score + SCORE.suicide);
     }
@@ -631,8 +648,55 @@ export class World {
     return { t: 'round', phase: this.phase, endsIn: this.phaseEndsAt - this.now, results: this.results };
   }
 
+  // --- bots ----------------------------------------------------------------------------------
+
+  /** Keeps the room topped up with bots while humans are here, and lets bots act and respawn. */
+  private manageBots(dt: number) {
+    const all = [...this.players.values()];
+    const humans = all.filter((p) => !p.bot).length;
+    const bots = all.filter((p) => p.bot);
+    const want = humans > 0 ? Math.max(0, this.botFill - humans) : 0;
+    this.botTimer -= dt;
+    if (bots.length > want) {
+      // Make room for people: the weakest bot leaves first.
+      const leaving = bots.sort((a, b) => Number(a.alive) - Number(b.alive) || a.score - b.score)[0];
+      this.leave(leaving.id);
+    } else if (bots.length < want && this.botTimer <= 0) {
+      this.botTimer = 1500;
+      const taken = new Set(all.map((p) => p.name));
+      const free = BOT_NAMES.filter((n) => !taken.has(n));
+      const name = free[Math.floor(this.rand() * free.length)] ?? `Bot ${bots.length + 1}`;
+      this.join(name, CLASS_IDS[Math.floor(this.rand() * CLASS_IDS.length)], true);
+    }
+    for (const p of this.players.values()) {
+      const bot = p.bot;
+      if (!bot) continue;
+      if (!p.alive) {
+        p.botAcc = 0;
+        if (!bot.respawnDelay) bot.respawnDelay = 400 + this.rand() * 2000;
+        if (this.phase === 'play' && this.now >= p.respawnAt + bot.respawnDelay) {
+          bot.respawnDelay = 0;
+          if (this.rand() < 0.3) p.cls = CLASS_IDS[Math.floor(this.rand() * CLASS_IDS.length)];
+          this.spawn(p);
+          this.rosterDirty = true;
+        }
+        continue;
+      }
+      const intent = bot.think(this, p);
+      p.botAcc += dt;
+      let first = true;
+      while (p.botAcc >= SIM_DT) {
+        p.botAcc -= SIM_DT;
+        // One-shot actions go in the first step only; held attacks repeat.
+        const keys = first ? intent.keys : intent.keys & ~(Key.Special | Key.Secondary);
+        first = false;
+        p.queue.push({ seq: p.ack + p.queue.length + 1, keys, aim: intent.aim, dist: intent.dist });
+      }
+    }
+  }
+
   private rosterMsg(): ServerMsg {
-    const r: RosterEntry[] = [...this.players.values()].map((p) => [p.id, p.name, p.cls, p.score, p.kills, p.deaths, p.bogs, p.ping]);
+    const r: RosterEntry[] = [...this.players.values()].map((p) => [p.id, p.name, p.cls, p.score, p.kills, p.deaths, p.bogs, p.ping, p.bot ? 1 : 0]);
     return { t: 'roster', r, khan: this.khan };
   }
 

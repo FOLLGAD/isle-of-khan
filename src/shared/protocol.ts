@@ -59,8 +59,8 @@ export const enum Ev {
 }
 export type EventSnap = [Ev, ...number[]];
 
-/** [id, name, class, score, kills, deaths, bogs, ping] */
-export type RosterEntry = [number, string, ClassId, number, number, number, number, number];
+/** [id, name, class, score, kills, deaths, bogs, ping, isBot] */
+export type RosterEntry = [number, string, ClassId, number, number, number, number, number, 0 | 1];
 
 export type KillHow = 'arrow' | 'sword' | 'orb' | 'bomb' | 'spin' | 'bog';
 

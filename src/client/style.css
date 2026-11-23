@@ -427,11 +427,12 @@ body.touch .slot .key { display: none; }
 #pause { width: min(360px, calc(100% - 32px)); }
 #death { width: min(520px, calc(100% - 32px)); }
 #death .classes { margin: 10px 0 4px; }
-#scoreboard { top: 45%; }
+#scoreboard { top: 45%; z-index: 5; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th { color: #aaa; font-weight: normal; padding: 6px 4px; border-bottom: 2px solid rgba(255, 255, 255, 0.2); }
 td { padding: 6px 4px; }
 td.name { text-align: left; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-tag { font-size: 8px; padding: 1px 4px; background: rgba(255, 255, 255, 0.2); color: #ccc; vertical-align: 2px; }
 tr.me td { background: rgba(255, 247, 176, 0.12); color: #fff7b0; }
 
 #debug { position: absolute; bottom: 140px; left: 50%; transform: translateX(-50%); font-size: 11px; background: var(--panel); padding: 4px 8px; }

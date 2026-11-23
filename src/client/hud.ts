@@ -229,7 +229,7 @@ export class Hud {
   private renderScoreboard() {
     const sorted = [...this.players].sort((a, b) => b.score - a.score || b.kills - a.kills);
     $('scoreboard-body').innerHTML = sorted
-      .map((p, i) => `<tr class="${p.id === this.myId ? 'me' : ''}"><td>${i + 1}</td><td class="name">${p.id === this.khan ? '<img src="/assets/sprites/crown.png" class="px-icon"> ' : ''}${escapeHtml(p.name)}</td><td>${CLASSES[p.cls].name}</td><td>${p.score}</td><td class="green">${p.kills}</td><td class="red">${p.deaths}</td><td>${p.bogs}</td><td>${p.ping}</td></tr>`)
+      .map((p, i) => `<tr class="${p.id === this.myId ? 'me' : ''}"><td>${i + 1}</td><td class="name">${p.id === this.khan ? '<img src="/assets/sprites/crown.png" class="px-icon"> ' : ''}${escapeHtml(p.name)}${p.bot ? ' <span class="bot-tag">BOT</span>' : ''}</td><td>${CLASSES[p.cls].name}</td><td>${p.score}</td><td class="green">${p.kills}</td><td class="red">${p.deaths}</td><td>${p.bogs}</td><td>${p.bot ? '–' : p.ping}</td></tr>`)
       .join('');
   }
 

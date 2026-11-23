@@ -11,7 +11,7 @@ function setup() {
   let seed = 7;
   const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   let now = 1_000_000;
-  const world = new World({ send: (to, msg) => sent.push({ to, msg }), broadcast: (msg) => sent.push({ to: 'all', msg }) }, now, rand);
+  const world = new World({ send: (to, msg) => sent.push({ to, msg }), broadcast: (msg) => sent.push({ to: 'all', msg }) }, now, { rand, botFill: 0 });
   world.mobs = [];
   let seq = 0;
   const run = (ms: number, inputs: (p: Player) => { keys: number; aim: number; dist?: number } | null = () => null) => {
@@ -166,5 +166,54 @@ describe('world', () => {
     run(700);
     world.handle(a.id, { t: 'chat', m: 'later' });
     expect(sent.filter((s) => s.msg.t === 'chat').map((s) => s.msg.t === 'chat' && s.msg.m)).toEqual(['hi there', 'later']);
+  });
+});
+
+describe('bots', () => {
+  function botWorld() {
+    let now = 1_000_000;
+    const world = new World({ send: () => {}, broadcast: () => {} }, now, { botFill: 6 });
+    const run = (ms: number) => {
+      for (let t = 0; t < ms; t += TICK_DT) {
+        now += TICK_DT;
+        world.tick(now);
+        world.flushEvents();
+      }
+    };
+    return { world, run };
+  }
+
+  it('fill the room only while people are playing and make way for them', () => {
+    const { world, run } = botWorld();
+    run(5000);
+    expect(world.players.size).toBe(0);
+    const human = world.join('Human', 'archer');
+    run(10_000);
+    expect([...world.players.values()].filter((p) => p.bot).length).toBe(5);
+    world.join('Friend', 'mage');
+    run(100);
+    expect([...world.players.values()].filter((p) => p.bot).length).toBe(4);
+    world.leave(human.id);
+    run(10_000);
+    expect(world.players.size).toBe(6);
+  });
+
+  it('roam, fight bogs and each other, and respawn', () => {
+    const { world, run } = botWorld();
+    const human = world.join('Human', 'warrior');
+    human.shieldUntil = Infinity;
+    const start = new Map<number, { x: number; y: number }>();
+    run(8000);
+    for (const p of world.players.values()) if (p.bot) start.set(p.id, { x: p.body.x, y: p.body.y });
+    run(90_000);
+    const bots = [...world.players.values()].filter((p) => p.bot);
+    const moved = bots.filter((p) => {
+      const s = start.get(p.id);
+      return !s || Math.hypot(p.body.x - s.x, p.body.y - s.y) > 200 || p.deaths > 0;
+    });
+    expect(moved.length).toBeGreaterThanOrEqual(4);
+    expect(bots.reduce((n, p) => n + p.bogs, 0)).toBeGreaterThan(3);
+    expect(bots.reduce((n, p) => n + p.kills, 0)).toBeGreaterThan(0);
+    expect(bots.every((p) => p.alive || world.now - p.respawnAt < 4000)).toBe(true);
   });
 });

@@ -31,14 +31,14 @@ export const CLASSES: Record<ClassId, ClassDef> = {
   },
   warrior: {
     name: 'Warrior',
-    hp: 170,
+    hp: 200,
     speed: 0.42,
     primary: { name: 'Sword', cd: steps(520), desc: 'Wide cleave, heavy knockback' },
     special: { kind: 'spin', name: 'Whirlwind', cd: steps(6000), desc: 'Hits everything around you' },
   },
   mage: {
     name: 'Mage',
-    hp: 90,
+    hp: 100,
     speed: 0.43,
     primary: { name: 'Arcane orb', cd: steps(720), desc: 'Slow orb that bursts on impact' },
     special: { kind: 'blink', name: 'Blink', cd: steps(6000), desc: 'Teleport toward the cursor' },
