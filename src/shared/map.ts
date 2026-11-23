@@ -3,6 +3,9 @@ import { TILE } from './constants';
 
 /** Tile ids (Tiled gids) that matter to gameplay. The rest are decorative grass/stone variants. */
 export const WATER = 8;
+/** Shallow water: walkable, but you wade through it slowly. */
+export const SHALLOW = 16;
+export const WADE_SPEED = 0.6;
 
 export interface GameMap {
   w: number;
@@ -48,6 +51,11 @@ export const MAP = loadMap();
 
 const blockedAt = (grid: Uint8Array, m: GameMap, tx: number, ty: number) =>
   tx < 0 || ty < 0 || tx >= m.w || ty >= m.h || grid[ty * m.w + tx] === 1;
+
+export const isShallow = (m: GameMap, wx: number, wy: number) => {
+  const tx = Math.floor(wx / TILE), ty = Math.floor(wy / TILE);
+  return tx >= 0 && ty >= 0 && tx < m.w && ty < m.h && m.tiles[ty * m.w + tx] === SHALLOW;
+};
 
 export const walkBlocked = (m: GameMap, tx: number, ty: number) => blockedAt(m.walk, m, tx, ty);
 export const shotBlocked = (m: GameMap, wx: number, wy: number) =>

@@ -55,6 +55,23 @@ describe('map', () => {
   });
 });
 
+describe('ford', () => {
+  it('lets you wade from the crescent to the mainland, slowly', () => {
+    // Walk up-left from the crescent's east tip across the shallows.
+    const b = newBody(79.5 * 64, 69.5 * 64);
+    for (let i = 0; i < 400 && b.x > 73.6 * 64; i++) stepPlayer(MAP, b, 'archer', { seq: i, keys: Key.Up | Key.Left, aim: 0, dist: 0 });
+    expect(b.x).toBeLessThanOrEqual(73.6 * 64);
+    expect(b.y).toBeLessThan(67.5 * 64);
+
+    const step = (x: number, y: number) => {
+      const body = newBody(x, y);
+      stepPlayer(MAP, body, 'archer', { seq: 1, keys: Key.Right, aim: 0, dist: 0 });
+      return body.x - x;
+    };
+    expect(step(76.5 * 64, 68.5 * 64)).toBeLessThan(step(28 * 64, 57 * 64 + 32) * 0.7);
+  });
+});
+
 describe('world', () => {
   it('names guests and spawns them on land', () => {
     const { world } = setup();

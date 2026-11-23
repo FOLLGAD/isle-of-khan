@@ -1,6 +1,6 @@
 import { ATTACK_SLOW, BLINK_RANGE, BOMB_CD, CLASSES, DASH_SPEED, DASH_STEPS, type ClassId } from './classes';
 import { Key, PLAYER_HH, PLAYER_HW, SIM_DT } from './constants';
-import { boxBlocked, moveBox, type GameMap } from './map';
+import { boxBlocked, isShallow, moveBox, WADE_SPEED, type GameMap } from './map';
 
 /** One fixed simulation step of player intent. `aim` is radians (0 = right, +y = down). */
 export interface Input {
@@ -107,7 +107,7 @@ export function stepPlayer(m: GameMap, b: Body, cls: ClassId, input: Input): num
     vx = b.dashX * DASH_SPEED;
     vy = b.dashY * DASH_SPEED;
   } else {
-    const speed = def.speed * (b.slow > 0 ? 0.6 : 1);
+    const speed = def.speed * (b.slow > 0 ? 0.6 : 1) * (isShallow(m, b.x, b.y) ? WADE_SPEED : 1);
     vx = mx * speed;
     vy = my * speed;
   }

@@ -3,7 +3,7 @@ import {
   CHAT_MAX, HURT, INTERMISSION_MS, INTERP_DELAY, Key, NAME_MAX, PLAYER_HH, PLAYER_HW, RESPAWN_MS, ROUND_MS, SCORE, SIM_DT,
   SPAWN_SHIELD_MS, TILE,
 } from '../shared/constants';
-import { MAP, moveBox, randomSpot, shotBlocked, type GameMap } from '../shared/map';
+import { isShallow, MAP, moveBox, randomSpot, shotBlocked, WADE_SPEED, type GameMap } from '../shared/map';
 import {
   Ev, MF, PF, ProjKind, type BombSnap, type ClientMsg, type EventSnap, type HeartSnap, type KillHow, type MobSnap,
   type PlayerSnap, type ProjSnap, type RosterEntry, type RoundResult, type ServerMsg,
@@ -107,6 +107,8 @@ const HEAL = 25;
 /** Rooms are topped up with bots until there are this many fighters. */
 export const BOT_FILL = 6;
 const BOT_TAUNTS = ['For the Khan!', 'Back to the sea with you.', 'gg', 'Too slow!', 'The isle is mine.', 'Hah!'];
+/** Bots with a catchphrase say it after most kills instead of a random taunt. */
+const BOT_CATCHPHRASES: Record<string, string> = { Jamukha: "That's what she said." };
 /** Chest height above the feet, where projectiles start and blasts are measured to. */
 const CHEST = 44;
 /** Snapshots include entities this far (world px) from the receiving player. */
@@ -419,14 +421,16 @@ export class World {
     if (by && by !== t) {
       by.kills++;
       by.score += SCORE.kill + (wasKhan ? SCORE.khanBonus : 0);
-      if (by.bot && this.rand() < (wasKhan ? 0.6 : 0.12)) {
-        this.out.broadcast({ t: 'chat', from: by.name, m: BOT_TAUNTS[Math.floor(this.rand() * BOT_TAUNTS.length)] });
-      }
     } else if (by === t) {
       t.score = Math.max(0, t.score + SCORE.suicide);
     }
     const killer = how === 'bog' ? 'a Bog' : by && by !== t ? by.name : null;
     this.out.broadcast({ t: 'kill', k: killer, v: t.name, kid: by?.id ?? 0, vid: t.id, how });
+    if (by?.bot && by !== t) {
+      const catchphrase = BOT_CATCHPHRASES[by.name];
+      if (catchphrase && this.rand() < 0.7) this.out.broadcast({ t: 'chat', from: by.name, m: catchphrase });
+      else if (this.rand() < (wasKhan ? 0.6 : 0.12)) this.out.broadcast({ t: 'chat', from: by.name, m: BOT_TAUNTS[Math.floor(this.rand() * BOT_TAUNTS.length)] });
+    }
     this.out.send(t.id, { t: 'dead', by: killer, respawnIn: RESPAWN_MS });
     this.rosterDirty = true;
   }
@@ -590,6 +594,7 @@ export class World {
         const dx = b.x - o.x, dy = b.y - o.y, d = Math.hypot(dx, dy);
         if (d > 0 && d < 56) (vx += (dx / d) * 0.08), (vy += (dy / d) * 0.08);
       }
+      if (isShallow(this.map, b.x, b.y)) (vx *= WADE_SPEED), (vy *= WADE_SPEED);
       const hit = moveBox(this.map, b, def.hw, def.hh, (vx + b.kx) * dt, (vy + b.ky) * dt);
       if (prey && (hit.hitX || hit.hitY) && b.wt <= 0) {
         // Stuck on a tree or shoreline: wander sideways for a moment to get around it.

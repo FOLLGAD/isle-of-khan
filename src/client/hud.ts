@@ -7,7 +7,7 @@ import { escapeHtml, type Game, type RosterInfo } from './game';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 /** Minimap colors per tile, as in the original game. */
-const TILE_COLORS: Record<number, string> = { 7: '#0075FD', 14: '#603000', 6: '#11A033' };
+const TILE_COLORS: Record<number, string> = { 7: '#0075FD', 14: '#603000', 6: '#11A033', 15: '#4FA0FF' };
 const tileColor = (gid: number) => TILE_COLORS[gid - 1] ?? ([3, 4, 5, 11, 12, 13, 19, 20, 21].includes(gid - 1) ? '#8FA3A2' : '#11A033');
 
 export const PRIMARY_ICON: Record<ClassId, string> = { archer: 'arrow', warrior: 'short-sword', mage: 'bolt' };

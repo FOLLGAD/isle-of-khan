@@ -1,6 +1,6 @@
 import type { ClassId } from '../shared/classes';
 import { TILE } from '../shared/constants';
-import { MAP, WATER } from '../shared/map';
+import { isShallow, MAP, WATER } from '../shared/map';
 import { flash, img, redFlash } from './assets';
 import type { Effects } from './fx';
 
@@ -269,6 +269,18 @@ export class Renderer {
     }
     if (!behind) this.drawWeapon(p, ax, ay, t);
     ctx.globalAlpha = 1;
+    if (isShallow(MAP, p.x, p.y)) this.wade(p.x, p.y, 48, t);
+  }
+
+  /** Water lapping around the legs of anyone standing in the shallows. */
+  private wade(x: number, y: number, w: number, t: number) {
+    const { ctx } = this;
+    const bob = Math.floor(t / 300) % 2 ? 4 : 0;
+    ctx.fillStyle = 'rgba(58, 150, 255, 0.75)';
+    ctx.fillRect(x - w / 2, y - 12 + bob, w, 28 - bob);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.fillRect(x - w / 2 - 4, y - 12 + bob, 12, 4);
+    ctx.fillRect(x + w / 2 - 8, y - 12 + bob, 12, 4);
   }
 
   private drawWeapon(p: DrawPlayer, ax: number, ay: number, t: number) {
@@ -348,6 +360,7 @@ export class Renderer {
     if (m.faceLeft) ctx.scale(-1, 1);
     ctx.drawImage(m.hurt ? flash.enemy : img.enemy, -w / 2 - squash / 2, -h + squash, w + squash, h - squash);
     ctx.restore();
+    if (isShallow(MAP, m.x, m.y)) this.wade(m.x, m.y, m.big ? 80 : 56, t);
   }
 
   private drawProjectile(q: { kind: number; x: number; y: number; vx: number; vy: number }, t: number) {
