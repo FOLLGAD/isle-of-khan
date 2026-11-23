@@ -104,6 +104,22 @@ describe('world', () => {
     expect(b.hp).toBeLessThan(CLASSES.archer.hp);
   });
 
+  it('judges swings by what the swinger saw, within reason', () => {
+    const { world, run, duel } = setup();
+    const a = world.join('A', 'warrior');
+    const b = world.join('B', 'archer');
+    duel(a, b, 90);
+    run(500);
+    // B steps out of reach just as A swings: A still saw B in range, so it lands.
+    b.body.x += 200;
+    run(TICK_DT, (p) => (p === a ? { keys: Key.Primary, aim: 0 } : null));
+    expect(b.hp).toBeLessThan(CLASSES.archer.hp);
+    // Long gone by the time of the next swing: a miss.
+    const hp = b.hp;
+    run(1000, (p) => (p === a ? { keys: Key.Primary, aim: 0 } : null));
+    expect(b.hp).toBe(hp);
+  });
+
   it('bombs hurt everyone nearby, the thrower half as much', () => {
     const { world, run, duel, sent } = setup();
     const a = world.join('A', 'archer');

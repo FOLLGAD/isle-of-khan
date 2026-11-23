@@ -1,12 +1,47 @@
 import { ARROW, CLASSES, ORB, type ClassId } from '../shared/classes';
-import { Key, TILE } from '../shared/constants';
-import { shotBlocked, walkBlocked, type GameMap } from '../shared/map';
+import { Key, PLAYER_HH, PLAYER_HW, TILE } from '../shared/constants';
+import { boxBlocked, shotBlocked, walkBlocked, type GameMap } from '../shared/map';
 import type { Player, World } from './world';
 
 export const BOT_NAMES = [
   'Subutai', 'Jebe', 'Mukhali', 'Ogedei', 'Tolui', 'Khasar', 'Chagatai', 'Jochi', 'Borte', 'Toghrul', 'Jamukha',
   'Batu', 'Hulagu', 'Mongke', 'Kublai', 'Belgutei', 'Sorghaghtani', 'Bo\'orchu', 'Qasar', 'Temuge',
 ];
+
+/** How a bot plays its class. Tuned per class by `npm run train`. */
+export interface Tactics {
+  /** Preferred distance band to a target (px). Warriors keep min at 0 and close in. */
+  min: number;
+  max: number;
+  /** Attack when the target is closer than this. */
+  fire: number;
+  /** Milliseconds between strafe direction changes while fighting at range. */
+  strafe: number;
+  /** Chance to lob a bomb when one is ready and the target is between bombMin and bombMax. */
+  bomb: number;
+  bombMin: number;
+  bombMax: number;
+  /** Archer and mage: use the class power to get away from anyone this close. */
+  escape: number;
+  /** Warrior: whirl when at least this many enemies are within reach. */
+  spinNear: number;
+  /** Go for hearts below this fraction of max HP. */
+  heal: number;
+  /** How far ahead to lead moving targets; 1 aims at the exact intercept. */
+  lead: number;
+  /** How hard to sidestep incoming projectiles; 0 ignores them. */
+  evade: number;
+  /** Zig-zag amplitude (px) while closing in on a target. */
+  weave: number;
+  /** Bogs must be this much closer than the nearest player to be preferred as targets. */
+  bogBias: number;
+}
+
+export const TACTICS: Record<ClassId, Tactics> = {
+  archer: { min: 240, max: 420, fire: 620, strafe: 1250, bomb: 0.55, bombMin: 140, bombMax: 460, escape: 150, spinNear: 0, heal: 0.5, lead: 1, evade: 0, weave: 0, bogBias: 120 },
+  warrior: { min: 0, max: 70, fire: 125, strafe: 1250, bomb: 0.55, bombMin: 140, bombMax: 460, escape: 0, spinNear: 2, heal: 0.5, lead: 1, evade: 0, weave: 0, bogBias: 120 },
+  mage: { min: 220, max: 380, fire: 520, strafe: 1250, bomb: 0.55, bombMin: 140, bombMax: 460, escape: 150, spinNear: 0, heal: 0.5, lead: 1, evade: 0, weave: 0, bogBias: 120 },
+};
 
 interface Target {
   kind: 'player' | 'mob' | 'heart' | 'spot';
@@ -15,12 +50,6 @@ interface Target {
   y: number;
 }
 
-/** Ideal fighting distance per class: warriors close in, ranged classes kite. */
-const RANGE: Record<ClassId, { min: number; max: number; fire: number }> = {
-  warrior: { min: 0, max: 70, fire: 125 },
-  archer: { min: 240, max: 420, fire: 620 },
-  mage: { min: 220, max: 380, fire: 520 },
-};
 const PROJ_SPEED: Record<ClassId, number> = { archer: ARROW.speed, mage: ORB.speed, warrior: Infinity };
 const CHEST = 44;
 
@@ -78,7 +107,7 @@ function findPath(m: GameMap, x0: number, y0: number, x1: number, y1: number): {
  */
 export class BotBrain {
   /** 0..1; better bots react faster and aim straighter. */
-  readonly skill = 0.45 + Math.random() * 0.45;
+  readonly skill: number;
   respawnDelay = 0;
   private target: Target | null = null;
   private retargetAt = 0;
@@ -86,23 +115,35 @@ export class BotBrain {
   private path: { x: number; y: number }[] = [];
   private pathAt = 0;
   private pathGoal = { x: 0, y: 0 };
-  private strafe = Math.random() < 0.5 ? 1 : -1;
+  private strafe: number;
   private strafeUntil = 0;
   private aimError = 0;
   private aimErrorAt = 0;
-  private last = new Map<number, { x: number; y: number; t: number; vx: number; vy: number }>();
+  /** Recent positions of everyone we can see, so we can perceive them with a human-like delay. */
+  private seen = new Map<number, { t: number; x: number; y: number }[]>();
+  /** How far in the past we see others (ms). People see the world ~100-150 ms late too. */
+  private readonly delay: number;
+  /** When the current target last came into attack range. */
+  private inRangeSince = Infinity;
   private stuckSince = 0;
   private lastPos = { x: 0, y: 0 };
   private unstickUntil = 0;
   private unstick = { x: 0, y: 0 };
   private wantBomb = 0;
+  private weavePhase: number;
 
-  constructor(readonly id: number) {}
+  constructor(readonly id: number, private rand: () => number) {
+    this.skill = 0.45 + rand() * 0.45;
+    this.delay = 260 - this.skill * 140;
+    this.strafe = rand() < 0.5 ? 1 : -1;
+    this.weavePhase = rand() * Math.PI * 2;
+  }
 
-  think(v: World, me: Player): { keys: number; aim: number; dist: number } {
-    const now = v.now, b = me.body, cls = me.cls;
-    this.trackVelocities(v);
-    if (now >= this.retargetAt || !this.targetValid(v)) this.pickTarget(v, me);
+  think(v: World, me: Player, tactics: Tactics): { keys: number; aim: number; dist: number } {
+    const now = v.now, b = me.body, cls = me.cls, rand = this.rand;
+    this.trackPositions(v);
+    if (now >= this.retargetAt || !this.targetValid(v)) this.pickTarget(v, me, tactics);
+    this.trackRange(now, Math.hypot(this.target!.x - b.x, this.target!.y - b.y) < tactics.fire);
     const t = this.target!;
     let keys = 0;
     let aim = Math.atan2(t.y - CHEST - (b.y - CHEST), t.x - b.x);
@@ -110,16 +151,34 @@ export class BotBrain {
 
     // Where to stand.
     let goal = { x: t.x, y: t.y };
-    const range = RANGE[cls];
     const fighting = t.kind === 'player' || t.kind === 'mob';
-    if (fighting && cls !== 'warrior' && dist < range.max + 80) {
+    const ax = (b.x - t.x) / (dist || 1), ay = (b.y - t.y) / (dist || 1);
+    if (fighting && tactics.min > 0 && dist < tactics.max + 80) {
       if (now > this.strafeUntil) {
         this.strafe = -this.strafe;
-        this.strafeUntil = now + 700 + Math.random() * 1100;
+        this.strafeUntil = now + tactics.strafe * (0.5 + rand());
       }
-      const ax = (b.x - t.x) / (dist || 1), ay = (b.y - t.y) / (dist || 1);
-      const back = dist < range.min ? 1 : dist > range.max ? -1 : 0;
+      const back = dist < tactics.min ? 1 : dist > tactics.max ? -1 : 0;
       goal = { x: b.x + (ax * back - ay * this.strafe) * 120, y: b.y + (ay * back + ax * this.strafe) * 120 };
+    } else if (fighting && dist > 150 && tactics.weave > 0) {
+      // Zig-zag on the way in so archers have a harder time.
+      const side = Math.sin(now / 260 + this.weavePhase) * tactics.weave;
+      goal = { x: t.x - ay * side, y: t.y + ax * side };
+    }
+    // Sidestep arrows and orbs that are about to hit us.
+    if (tactics.evade > 0) {
+      for (const q of v.projs) {
+        if (q.owner === this.id) continue;
+        const rx = b.x - q.x, ry = b.y - CHEST - q.y, speed = Math.hypot(q.vx, q.vy);
+        const tHit = (rx * q.vx + ry * q.vy) / (speed * speed);
+        // Too close to react to, or too far to worry about yet.
+        if (tHit < 140 || tHit > 450) continue;
+        const miss = Math.abs(rx * q.vy - ry * q.vx) / speed;
+        if (miss > 50) continue;
+        const side = rx * q.vy - ry * q.vx >= 0 ? 1 : -1;
+        goal = { x: b.x + (q.vy / speed) * side * 150 * tactics.evade, y: b.y - (q.vx / speed) * side * 150 * tactics.evade };
+        break;
+      }
     }
     // Get away from bombs that are about to go off.
     for (const bomb of v.bombs) {
@@ -129,18 +188,18 @@ export class BotBrain {
     keys |= this.steer(v.map, b, goal, now);
 
     if (fighting) {
-      const p = this.predict(t, b, cls);
+      const p = this.predict(t, b, cls, tactics.lead);
       aim = Math.atan2(p.y - CHEST - (b.y - CHEST), p.x - b.x) + this.noise(now);
       dist = Math.hypot(p.x - b.x, p.y - b.y);
-      const reacted = now - this.acquiredAt > 550 - this.skill * 350;
+      const reaction = 550 - this.skill * 350;
+      const reacted = now - this.acquiredAt > reaction && now - this.inRangeSince > reaction * 0.6;
       const clear = lineClear(b.x, b.y, t.x, t.y, (x, y) => shotBlocked(v.map, x, y));
-      if (reacted && clear && dist < range.fire) keys |= Key.Primary;
-      // Bombs: lob one now and then at someone at medium range.
-      if (reacted && b.cdS === 0 && dist > 140 && dist < 460 && now > this.wantBomb) {
-        this.wantBomb = now + 1500 + Math.random() * 4000;
-        if (Math.random() < 0.55) keys |= Key.Secondary;
+      if (reacted && clear && dist < tactics.fire) keys |= Key.Primary;
+      if (reacted && b.cdS === 0 && dist > tactics.bombMin && dist < tactics.bombMax && now > this.wantBomb) {
+        this.wantBomb = now + 1500 + rand() * 4000;
+        if (rand() < tactics.bomb) keys |= Key.Secondary;
       }
-      keys |= this.special(cls, me, b, t, dist, v, (a) => (aim = a), (d) => (dist = d));
+      keys |= this.special(cls, me, t, dist, v, tactics, (a) => (aim = a), (d) => (dist = d));
     } else if (t.kind === 'heart' && cls === 'archer' && b.cdX === 0 && dist > 300) {
       keys |= Key.Special;
     }
@@ -148,20 +207,21 @@ export class BotBrain {
   }
 
   private special(
-    cls: ClassId, me: { hp: number }, b: { x: number; y: number; cdX: number }, t: Target, dist: number, v: World,
+    cls: ClassId, me: Player, t: Target, dist: number, v: World, tactics: Tactics,
     setAim: (a: number) => void, setDist: (d: number) => void,
   ) {
+    const b = me.body;
     if (b.cdX > 0) return 0;
-    const lowHp = me.hp < CLASSES[cls].hp * 0.35;
     if (cls === 'warrior') {
       let near = 0;
       for (const p of v.players.values()) if (p.alive && p.id !== this.id && Math.hypot(p.body.x - b.x, p.body.y - b.y) < 130) near++;
       for (const m of v.mobs) if (Math.hypot(m.x - b.x, m.y - b.y) < 130) near++;
-      return near >= 2 || (near >= 1 && Math.random() < 0.02) ? Key.Special : 0;
+      return near >= tactics.spinNear ? Key.Special : 0;
     }
-    if (dist < 150 || (lowHp && dist < 300)) {
+    const lowHp = me.hp < CLASSES[cls].hp * 0.35;
+    if (dist < tactics.escape || (lowHp && dist < tactics.escape * 2)) {
       // Escape: aim away from the threat (dash goes the way we walk, blink goes where we aim).
-      const away = Math.atan2(b.y - t.y, b.x - t.x) + (Math.random() - 0.5) * 0.8;
+      const away = Math.atan2(b.y - t.y, b.x - t.x) + (this.rand() - 0.5) * 0.8;
       setAim(away);
       setDist(400);
       return Key.Special;
@@ -170,60 +230,85 @@ export class BotBrain {
   }
 
   /** Lead the target by its recent velocity so arrows and orbs arrive where it will be. */
-  private predict(t: Target, b: { x: number; y: number }, cls: ClassId) {
-    const vel = this.last.get(t.kind === 'player' ? t.id : -t.id);
+  private predict(t: Target, b: { x: number; y: number }, cls: ClassId, lead: number) {
     const speed = PROJ_SPEED[cls];
-    if (!vel || !Number.isFinite(speed)) return t;
-    const time = Math.min(800, Math.hypot(t.x - b.x, t.y - b.y) / speed) * this.skill;
-    return { x: t.x + vel.vx * time, y: t.y + vel.vy * time };
+    if ((t.kind !== 'player' && t.kind !== 'mob') || !Number.isFinite(speed)) return t;
+    const key = t.kind === 'player' ? t.id : -t.id;
+    const now = this.perceive(key, 0), before = this.perceive(key, 150);
+    if (!now || !before) return t;
+    const vx = (now.x - before.x) / 150, vy = (now.y - before.y) / 150;
+    const time = Math.min(800, Math.hypot(t.x - b.x, t.y - b.y) / speed) * lead * (0.5 + this.skill * 0.6);
+    return { x: t.x + vx * time, y: t.y + vy * time };
+  }
+
+  /** Where `key` appeared to be `ago` ms before our perception horizon. */
+  private perceive(key: number, ago: number) {
+    const h = this.seen.get(key);
+    if (!h?.length) return null;
+    const at = h[h.length - 1].t - this.delay - ago;
+    for (let i = h.length - 1; i > 0; i--) {
+      if (h[i - 1].t <= at) {
+        const a = h[i - 1], b = h[i], f = (at - a.t) / (b.t - a.t || 1);
+        return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+      }
+    }
+    return h[0];
+  }
+
+  private trackRange(now: number, inRange: boolean) {
+    if (!inRange) this.inRangeSince = Infinity;
+    else if (this.inRangeSince === Infinity) this.inRangeSince = now;
   }
 
   private noise(now: number) {
     if (now > this.aimErrorAt) {
-      this.aimErrorAt = now + 250 + Math.random() * 300;
-      this.aimError = (Math.random() - 0.5) * (0.05 + (1 - this.skill) * 0.4);
+      this.aimErrorAt = now + 250 + this.rand() * 300;
+      this.aimError = (this.rand() - 0.5) * (0.05 + (1 - this.skill) * 0.4);
     }
     return this.aimError;
   }
 
-  private trackVelocities(v: World) {
-    const seen = (key: number, x: number, y: number) => {
-      const l = this.last.get(key);
-      if (l && v.now > l.t) {
-        const dt = v.now - l.t;
-        l.vx = l.vx * 0.5 + ((x - l.x) / dt) * 0.5;
-        l.vy = l.vy * 0.5 + ((y - l.y) / dt) * 0.5;
-        (l.x = x), (l.y = y), (l.t = v.now);
-      } else if (!l) this.last.set(key, { x, y, t: v.now, vx: 0, vy: 0 });
+  private trackPositions(v: World) {
+    const record = (key: number, x: number, y: number) => {
+      let h = this.seen.get(key);
+      if (!h) this.seen.set(key, (h = []));
+      h.push({ t: v.now, x, y });
+      while (h.length > 2 && h[1].t < v.now - 600) h.shift();
     };
-    for (const p of v.players.values()) if (p.alive) seen(p.id, p.body.x, p.body.y);
-    for (const m of v.mobs) seen(-m.id, m.x, m.y);
+    for (const p of v.players.values()) if (p.alive && p.id !== this.id) record(p.id, p.body.x, p.body.y);
+    for (const m of v.mobs) record(-m.id, m.x, m.y);
+    if (this.seen.size > 80) for (const [k, h] of this.seen) if (h[h.length - 1].t < v.now - 2000) this.seen.delete(k);
   }
 
   private targetValid(v: World) {
     const t = this.target;
     if (!t) return false;
     if (t.kind === 'player') {
-      for (const p of v.players.values()) if (p.id === t.id && p.alive) return ((t.x = p.body.x), (t.y = p.body.y), true);
+      for (const p of v.players.values()) if (p.id === t.id && p.alive) return this.locate(t, p.id), true;
       return false;
     }
     if (t.kind === 'mob') {
       const m = v.mobs.find((q) => q.id === t.id);
-      return !!m && ((t.x = m.x), (t.y = m.y), true);
+      return !!m && (this.locate(t, -m.id), true);
     }
     if (t.kind === 'heart') return v.hearts.some((h) => h.x === t.x && h.y === t.y);
     return Math.hypot(t.x - this.lastPos.x, t.y - this.lastPos.y) > 120;
   }
 
-  private pickTarget(v: World, me: Player) {
-    const b = me.body;
-    this.retargetAt = v.now + 700 + Math.random() * 600;
+  private locate(t: Target, key: number) {
+    const p = this.perceive(key, 0);
+    if (p) (t.x = p.x), (t.y = p.y);
+  }
+
+  private pickTarget(v: World, me: Player, tactics: Tactics) {
+    const b = me.body, rand = this.rand;
+    this.retargetAt = v.now + 700 + rand() * 600;
     const old = this.target;
     let best: Target | null = null, bestScore = Infinity;
     const consider = (t: Target, score: number) => {
       if (score < bestScore) (bestScore = score), (best = t);
     };
-    const hurt = me.hp < CLASSES[me.cls].hp * 0.5;
+    const hurt = me.hp < CLASSES[me.cls].hp * tactics.heal;
     for (const h of v.hearts) {
       const d = Math.hypot(h.x - b.x, h.y - b.y);
       if (hurt && d < 900) consider({ kind: 'heart', id: 0, x: h.x, y: h.y }, d - 400);
@@ -238,7 +323,7 @@ export class BotBrain {
     }
     for (const m of v.mobs) {
       const d = Math.hypot(m.x - b.x, m.y - b.y);
-      if (d < 800) consider({ kind: 'mob', id: m.id, x: m.x, y: m.y }, d + 120 - (old?.kind === 'mob' && old.id === m.id ? 150 : 0));
+      if (d < 800) consider({ kind: 'mob', id: m.id, x: m.x, y: m.y }, d + tactics.bogBias - (old?.kind === 'mob' && old.id === m.id ? 150 : 0));
     }
     if (!best) {
       // Nothing nearby: head for the nearest fight, or wander the isle.
@@ -249,15 +334,17 @@ export class BotBrain {
         if (d < nd) (nd = d), (nearest = { kind: 'spot', id: 0, x: p.body.x, y: p.body.y });
       }
       if (old?.kind === 'spot' && this.targetValid(v)) best = old;
-      else if (nearest && Math.random() < 0.7) best = nearest;
+      else if (nearest && rand() < 0.7) best = nearest;
       else {
         for (let i = 0; i < 50 && !best; i++) {
-          const tx = Math.floor(Math.random() * v.map.w), ty = Math.floor(Math.random() * v.map.h);
+          const tx = Math.floor(rand() * v.map.w), ty = Math.floor(rand() * v.map.h);
           if (!walkBlocked(v.map, tx, ty)) best = { kind: 'spot', id: 0, x: (tx + 0.5) * TILE, y: (ty + 0.5) * TILE };
         }
       }
     }
     this.target = best ?? { kind: 'spot', id: 0, x: v.map.wizard.x, y: v.map.wizard.y + TILE };
+    if (this.target.kind === 'player') this.locate(this.target, this.target.id);
+    else if (this.target.kind === 'mob') this.locate(this.target, -this.target.id);
     if (!old || old.kind !== this.target.kind || old.id !== this.target.id) this.acquiredAt = v.now;
   }
 
@@ -268,13 +355,14 @@ export class BotBrain {
     this.lastPos = { x: b.x, y: b.y };
     if (now < this.unstickUntil) return dirKeys(this.unstick.x, this.unstick.y);
     if (now - this.stuckSince > 400 && Math.hypot(goal.x - b.x, goal.y - b.y) > 40) {
-      const a = Math.random() * Math.PI * 2;
+      const a = this.rand() * Math.PI * 2;
       this.unstick = { x: Math.cos(a), y: Math.sin(a) };
       this.unstickUntil = now + 300;
       this.stuckSince = now;
       this.path = [];
     }
-    const walkable = (x: number, y: number) => walkBlocked(m, Math.floor(x / TILE), Math.floor(y / TILE));
+    // Check the whole body (plus a little slack), not just its center, so we don't clip tree corners.
+    const walkable = (x: number, y: number) => boxBlocked(m, x - PLAYER_HW - 4, y - PLAYER_HH - 4, x + PLAYER_HW + 4, y + PLAYER_HH + 4);
     if (lineClear(b.x, b.y, goal.x, goal.y, walkable) && !walkable(goal.x, goal.y)) {
       this.path = [];
       return dirKeys(goal.x - b.x, goal.y - b.y);

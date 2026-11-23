@@ -1,6 +1,6 @@
 import { ARROW, CLASS_IDS, CLASSES, isClassId, ORB, type ClassId } from '../shared/classes';
 import {
-  CHAT_MAX, HURT, INTERMISSION_MS, Key, NAME_MAX, PLAYER_HH, PLAYER_HW, RESPAWN_MS, ROUND_MS, SCORE, SIM_DT,
+  CHAT_MAX, HURT, INTERMISSION_MS, INTERP_DELAY, Key, NAME_MAX, PLAYER_HH, PLAYER_HW, RESPAWN_MS, ROUND_MS, SCORE, SIM_DT,
   SPAWN_SHIELD_MS, TILE,
 } from '../shared/constants';
 import { MAP, moveBox, randomSpot, shotBlocked, type GameMap } from '../shared/map';
@@ -9,7 +9,7 @@ import {
   type PlayerSnap, type ProjSnap, type RosterEntry, type RoundResult, type ServerMsg,
 } from '../shared/protocol';
 import { Act, newBody, packBody, stepPlayer, type Body, type Input } from '../shared/sim';
-import { BOT_NAMES, BotBrain } from './bot';
+import { BOT_NAMES, BotBrain, TACTICS, type Tactics } from './bot';
 
 export interface Player {
   id: number;
@@ -138,15 +138,19 @@ export class World {
   private rosterDirty = true;
   private rosterTimer = 0;
   private botTimer = 0;
+  /** Recent positions of players and bogs, for judging human swings by what they saw. */
+  private trail = new Map<number, { t: number; x: number; y: number }[]>();
   readonly map: GameMap = MAP;
   private rand: () => number;
   private botFill: number;
+  private tactics: Record<ClassId, Tactics>;
 
-  constructor(private out: Outbox, now: number, opts: { rand?: () => number; botFill?: number } = {}) {
+  constructor(private out: Outbox, now: number, opts: { rand?: () => number; botFill?: number; tactics?: Record<ClassId, Tactics> } = {}) {
     this.now = this.lastTick = now;
     this.phaseEndsAt = now + ROUND_MS;
     this.rand = opts.rand ?? Math.random;
     this.botFill = opts.botFill ?? BOT_FILL;
+    this.tactics = opts.tactics ?? TACTICS;
   }
 
   join(rawName: unknown, rawCls: unknown, bot = false): Player {
@@ -163,7 +167,7 @@ export class World {
       hurtUntil: 0, score: 0, kills: 0, deaths: 0, bogs: 0, ping: 0, queue: [], budget: 0, ack: 0, lastChat: 0,
       bot: null, botAcc: 0,
     };
-    if (bot) p.bot = new BotBrain(p.id);
+    if (bot) p.bot = new BotBrain(p.id, this.rand);
     this.players.set(p.id, p);
     this.spawn(p);
     this.rosterDirty = true;
@@ -229,6 +233,7 @@ export class World {
       this.tickMobs(dt);
       this.tickHearts(dt);
     }
+    this.recordTrail();
     this.updateKhan();
     this.rosterTimer -= dt;
     if (this.rosterDirty || this.rosterTimer <= 0) {
@@ -345,21 +350,53 @@ export class World {
 
   private melee(p: Player, range: number, arc: number, dmg: number, knock: number, how: KillHow) {
     const x = p.body.x, y = p.body.y - CHEST, aim = p.body.aim;
+    // People see everyone else INTERP_DELAY plus half their ping in the past, so judge their swings
+    // against where targets were on their screen. Bots perceive with their own delay instead.
+    const seenAt = this.now - (p.bot ? 0 : Math.min(250, INTERP_DELAY + p.ping / 2));
     const inArc = (tx: number, ty: number, radius: number) => {
       const d = Math.hypot(tx - x, ty - y);
       return d <= range + radius && (arc >= Math.PI || d < radius || angleDiff(Math.atan2(ty - y, tx - x), aim) <= arc);
     };
     for (const o of this.players.values()) {
-      if (o === p || !o.alive || !inArc(o.body.x, o.body.y - CHEST, 26)) continue;
+      if (o === p || !o.alive) continue;
+      const seen = this.positionAt(o.id, seenAt) ?? o.body;
+      if (!inArc(seen.x, seen.y - CHEST, 26)) continue;
       const d = Math.hypot(o.body.x - x, o.body.y - CHEST - y) || 1;
       this.damagePlayer(o, dmg, p, (o.body.x - x) / d, (o.body.y - CHEST - y) / d, knock, how);
     }
     for (const b of [...this.mobs]) {
-      const my = b.y - (b.big ? 70 : 48);
-      if (!inArc(b.x, my, b.big ? 40 : 28)) continue;
-      const d = Math.hypot(b.x - x, my - y) || 1;
-      this.damageMob(b, dmg, p, (b.x - x) / d, (my - y) / d, knock);
+      const seen = this.positionAt(b.id, seenAt) ?? b;
+      const lift = b.big ? 70 : 48;
+      if (!inArc(seen.x, seen.y - lift, b.big ? 40 : 28)) continue;
+      const d = Math.hypot(b.x - x, b.y - lift - y) || 1;
+      this.damageMob(b, dmg, p, (b.x - x) / d, (b.y - lift - y) / d, knock);
     }
+  }
+
+  /** Where entity `id` stood at time `at`, from the last few hundred ms of history. */
+  private positionAt(id: number, at: number) {
+    const h = this.trail.get(id);
+    if (!h?.length || at >= this.now) return null;
+    for (let i = h.length - 1; i > 0; i--) {
+      if (h[i - 1].t <= at) {
+        const a = h[i - 1], b = h[i], f = Math.min(1, (at - a.t) / (b.t - a.t || 1));
+        return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+      }
+    }
+    return h[0];
+  }
+
+  private recordTrail() {
+    const keep = (id: number, x: number, y: number) => {
+      let h = this.trail.get(id);
+      if (!h) this.trail.set(id, (h = []));
+      h.push({ t: this.now, x, y });
+      while (h.length > 2 && h[1].t < this.now - 300) h.shift();
+    };
+    const live = new Set<number>();
+    for (const p of this.players.values()) if (p.alive) (keep(p.id, p.body.x, p.body.y), live.add(p.id));
+    for (const b of this.mobs) (keep(b.id, b.x, b.y), live.add(b.id));
+    for (const id of this.trail.keys()) if (!live.has(id)) this.trail.delete(id);
   }
 
   private damagePlayer(t: Player, amount: number, by: Player | null, dx: number, dy: number, knock: number, how: KillHow) {
@@ -664,7 +701,7 @@ export class World {
       const taken = new Set(all.map((p) => p.name));
       const free = BOT_NAMES.filter((n) => !taken.has(n));
       const name = free[Math.floor(this.rand() * free.length)] ?? `Bot ${bots.length + 1}`;
-      this.join(name, CLASS_IDS[Math.floor(this.rand() * CLASS_IDS.length)], true);
+      this.join(name, this.botClass(), true);
     }
     for (const p of this.players.values()) {
       const bot = p.bot;
@@ -674,13 +711,13 @@ export class World {
         if (!bot.respawnDelay) bot.respawnDelay = 400 + this.rand() * 2000;
         if (this.phase === 'play' && this.now >= p.respawnAt + bot.respawnDelay) {
           bot.respawnDelay = 0;
-          if (this.rand() < 0.3) p.cls = CLASS_IDS[Math.floor(this.rand() * CLASS_IDS.length)];
+          if (this.rand() < 0.3) p.cls = this.botClass(p);
           this.spawn(p);
           this.rosterDirty = true;
         }
         continue;
       }
-      const intent = bot.think(this, p);
+      const intent = bot.think(this, p, this.tactics[p.cls]);
       p.botAcc += dt;
       let first = true;
       while (p.botAcc >= SIM_DT) {
@@ -691,6 +728,15 @@ export class World {
         p.queue.push({ seq: p.ack + p.queue.length + 1, keys, aim: intent.aim, dist: intent.dist });
       }
     }
+  }
+
+  /** The class fewest bots are playing, so bot lineups stay varied. */
+  private botClass(except?: Player): ClassId {
+    const count = Object.fromEntries(CLASS_IDS.map((c) => [c, 0])) as Record<ClassId, number>;
+    for (const p of this.players.values()) if (p.bot && p !== except) count[p.cls]++;
+    const fewest = Math.min(...CLASS_IDS.map((c) => count[c]));
+    const options = CLASS_IDS.filter((c) => count[c] === fewest);
+    return options[Math.floor(this.rand() * options.length)];
   }
 
   private rosterMsg(): ServerMsg {
