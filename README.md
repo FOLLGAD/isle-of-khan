@@ -25,7 +25,7 @@ On phones and tablets: the left stick moves, the right stick aims and fires, and
 - Rounds last 5 minutes. The leader at the end is Khan of the Isle, then everything resets.
 - Hearts heal 25 HP. Bogs sometimes drop them, and so does everyone who dies.
 - **Play with friends** creates a private room. Share the link from the Esc menu.
-- Bots keep every room lively: while anyone is playing, the room is topped up to 6 fighters with bots, and they step aside as people join. They play by the same rules as you (same inputs, cooldowns and hitboxes), find paths around trees and water, keep their class's preferred range, dodge bombs, grab hearts when hurt, and go after the Khan. They're tagged BOT on the scoreboard.
+- Bots keep every room lively: while anyone is playing, the room is topped up to 6 fighters with bots, and they step aside as people join. They play by the same rules as you (same inputs, cooldowns and hitboxes) and see the world with a human-like delay and reaction time, so they don't have superhuman reflexes. They're tagged BOT on the scoreboard.
 
 ## Classes
 
@@ -36,7 +36,7 @@ On phones and tablets: the left stick moves, the right stick aims and fires, and
 | Secondary (RMB) | Bombs | Bombs | Bombs |
 | Special (Space) | Dash | Whirlwind: hits everything around you | Blink toward the cursor, even across water |
 
-HP and loadouts follow the original 2016 class menu. The mage's look (yellow pointed hat, blue cloak) comes from the unfinished 2016 mage sheet, completed in all four directions.
+HP and loadouts follow the original 2016 class menu. The classes are balanced so that, played well, each wins about as often as it loses overall, with rock-paper-scissors matchups: archers kite warriors, warriors run down mages, and mage splash punishes archers. The mage's look (yellow pointed hat, blue cloak) comes from the unfinished 2016 mage sheet, completed in all four directions.
 
 ## Development
 
@@ -49,11 +49,21 @@ npm run typecheck
 
 `npm run dev` runs the real Worker and Durable Objects locally in workerd through the Cloudflare Vite plugin, so multiplayer works across browser tabs.
 
+### Bots and balance
+
+```sh
+npm run arena -- 10     # play 10 simulated bot rounds, print per-class results
+npm run train -- 30 2   # tune bot tactics per class in self-play; prints a new TACTICS table
+npm run balance -- 80   # per-class kill/death with 95% intervals, plus head-to-head matchups
+```
+
+Bot tactics live in `TACTICS` in `src/server/bot.ts` and class stats in `src/shared/classes.ts` and `src/server/world.ts`. After changing a class, retrain and re-run the balance check.
+
 ## Deploying to Cloudflare
 
 ```sh
 npx wrangler login
-npm run deploy     # builds, then runs wrangler deploy
+npm run deploy     # builds, then runs wrangler deploy to isle-of-khan.emil.zip
 ```
 
 Durable Objects use the SQLite storage backend, so this works on the Workers free plan. You can also connect this repository in the Cloudflare dashboard (Workers & Pages, then Import a repository) with build command `npm run build` and deploy command `npx wrangler deploy`.

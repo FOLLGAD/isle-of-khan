@@ -37,10 +37,11 @@ export interface Tactics {
   bogBias: number;
 }
 
+/** Tuned with scripts/train.ts (self-play hill climbing), checked on held-out rounds. */
 export const TACTICS: Record<ClassId, Tactics> = {
-  archer: { min: 240, max: 420, fire: 620, strafe: 1250, bomb: 0.55, bombMin: 140, bombMax: 460, escape: 150, spinNear: 0, heal: 0.5, lead: 1, evade: 0, weave: 0, bogBias: 120 },
-  warrior: { min: 0, max: 70, fire: 125, strafe: 1250, bomb: 0.55, bombMin: 140, bombMax: 460, escape: 0, spinNear: 2, heal: 0.5, lead: 1, evade: 0, weave: 0, bogBias: 120 },
-  mage: { min: 220, max: 380, fire: 520, strafe: 1250, bomb: 0.55, bombMin: 140, bombMax: 460, escape: 150, spinNear: 0, heal: 0.5, lead: 1, evade: 0, weave: 0, bogBias: 120 },
+  archer: { min: 320, max: 420, fire: 600, strafe: 1250, bomb: 0.5, bombMin: 140, bombMax: 560, escape: 135, spinNear: 0, heal: 0.68, lead: 0.92, evade: 0, weave: 0, bogBias: 30 },
+  warrior: { min: 0, max: 70, fire: 120, strafe: 1250, bomb: 0.55, bombMin: 140, bombMax: 505, escape: 0, spinNear: 1, heal: 0.43, lead: 1, evade: 0, weave: 0, bogBias: 200 },
+  mage: { min: 225, max: 535, fire: 595, strafe: 1290, bomb: 0.55, bombMin: 175, bombMax: 460, escape: 190, spinNear: 0, heal: 0.59, lead: 1, evade: 0, weave: 0, bogBias: 120 },
 };
 
 interface Target {

@@ -32,7 +32,7 @@ export const CLASSES: Record<ClassId, ClassDef> = {
   warrior: {
     name: 'Warrior',
     hp: 200,
-    speed: 0.45,
+    speed: 0.44,
     primary: { name: 'Sword', cd: steps(520), desc: 'Wide cleave, heavy knockback' },
     special: { kind: 'spin', name: 'Whirlwind', cd: steps(6000), desc: 'Hits everything around you' },
   },

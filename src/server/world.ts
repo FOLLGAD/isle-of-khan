@@ -94,8 +94,8 @@ export interface Outbox {
   broadcast(msg: ServerMsg): void;
 }
 
-const SWORD = { range: 118, arc: 1.15, dmg: 38, knock: 1.25 };
-const SPIN = { range: 140, dmg: 30, knock: 1.5 };
+const SWORD = { range: 118, arc: 1.15, dmg: 35, knock: 1.25 };
+const SPIN = { range: 140, dmg: 28, knock: 1.5 };
 const BOMB = { fuse: 1000, friction: 0.004, radius: 170, maxDmg: 64, minDmg: 14, maxRange: 540 };
 const BOG = {
   small: { hp: 45, speed: 0.2, hw: 22, hh: 12, dmg: 10, knock: 0.9, hurt: { l: -26, r: 26, t: -112, b: 10 } },

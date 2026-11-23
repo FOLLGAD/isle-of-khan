@@ -10,7 +10,10 @@
     "preview": "npm run build && vite preview",
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.client.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "arena": "tsx scripts/arena.ts",
+    "train": "tsx scripts/train.ts",
+    "balance": "tsx scripts/balance.ts"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.70.1",
