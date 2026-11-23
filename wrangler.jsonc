@@ -4,6 +4,7 @@
   "main": "./src/server/worker.ts",
   "compatibility_date": "2026-11-01",
   "assets": { "not_found_handling": "none" },
+  "routes": [{ "pattern": "isle-of-khan.emil.zip", "custom_domain": true }],
   "durable_objects": {
     "bindings": [
       { "name": "ROOMS", "class_name": "GameRoom" },

@@ -94,6 +94,14 @@ async function main() {
   };
   requestAnimationFrame(backdrop);
 
+  async function findRoom() {
+    const res = await fetch('/api/match');
+    if (!res.ok || !res.headers.get('content-type')?.includes('application/json')) {
+      throw new Error(`Couldn't reach the isle (${res.status}). Try reloading the page.`);
+    }
+    return ((await res.json()) as { room: string }).room;
+  }
+
   async function start() {
     audio.unlock();
     const name = nameInput.value.trim();
@@ -105,7 +113,7 @@ async function main() {
     $('play').textContent = 'Setting sail…';
     try {
       for (let attempt = 0; attempt < 4; attempt++) {
-        const target = room ?? ((await (await fetch('/api/match')).json()) as { room: string }).room;
+        const target = room ?? (await findRoom());
         const res = await Connection.open(target, name, cls);
         if (res === 'full') {
           if (room) throw new Error('That room is full.');
