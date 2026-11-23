@@ -1,4 +1,4 @@
-import { CLASSES, type ClassId } from '../shared/classes';
+import { ARROW, CLASSES, ORB, type ClassId } from '../shared/classes';
 import { Key, TILE } from '../shared/constants';
 import { shotBlocked, walkBlocked, type GameMap } from '../shared/map';
 import type { Player, World } from './world';
@@ -21,7 +21,7 @@ const RANGE: Record<ClassId, { min: number; max: number; fire: number }> = {
   archer: { min: 240, max: 420, fire: 620 },
   mage: { min: 220, max: 380, fire: 520 },
 };
-const PROJ_SPEED: Record<ClassId, number> = { archer: 1.6, mage: 0.78, warrior: Infinity };
+const PROJ_SPEED: Record<ClassId, number> = { archer: ARROW.speed, mage: ORB.speed, warrior: Infinity };
 const CHEST = 44;
 
 const dirKeys = (dx: number, dy: number) => {

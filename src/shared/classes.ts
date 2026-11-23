@@ -25,14 +25,14 @@ export const CLASSES: Record<ClassId, ClassDef> = {
   archer: {
     name: 'Archer',
     hp: 100,
-    speed: 0.46,
-    primary: { name: 'Bow', cd: steps(420), desc: 'Hold to loose arrows' },
-    special: { kind: 'dash', name: 'Dash', cd: steps(4500), desc: 'Burst of speed' },
+    speed: 0.43,
+    primary: { name: 'Bow', cd: steps(480), desc: 'Hold to loose arrows' },
+    special: { kind: 'dash', name: 'Dash', cd: steps(6000), desc: 'Burst of speed' },
   },
   warrior: {
     name: 'Warrior',
     hp: 200,
-    speed: 0.42,
+    speed: 0.45,
     primary: { name: 'Sword', cd: steps(520), desc: 'Wide cleave, heavy knockback' },
     special: { kind: 'spin', name: 'Whirlwind', cd: steps(6000), desc: 'Hits everything around you' },
   },
@@ -40,9 +40,13 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     name: 'Mage',
     hp: 100,
     speed: 0.43,
-    primary: { name: 'Arcane orb', cd: steps(720), desc: 'Slow orb that bursts on impact' },
+    primary: { name: 'Arcane orb', cd: steps(680), desc: 'Slow orb that bursts on impact' },
     special: { kind: 'blink', name: 'Blink', cd: steps(6000), desc: 'Teleport toward the cursor' },
   },
 };
+
+/** Projectile stats, shared by the server, the client's predicted shots and the bots' aim. */
+export const ARROW = { speed: 1.25, ttl: 600, dmg: 16, knock: 0.5 };
+export const ORB = { speed: 0.9, ttl: 950, dmg: 28, knock: 0.7, splash: 90, splashDmg: 16 };
 
 export const isClassId = (v: unknown): v is ClassId => typeof v === 'string' && v in CLASSES;

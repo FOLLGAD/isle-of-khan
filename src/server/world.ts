@@ -1,4 +1,4 @@
-import { CLASS_IDS, CLASSES, isClassId, type ClassId } from '../shared/classes';
+import { ARROW, CLASS_IDS, CLASSES, isClassId, ORB, type ClassId } from '../shared/classes';
 import {
   CHAT_MAX, HURT, INTERMISSION_MS, Key, NAME_MAX, PLAYER_HH, PLAYER_HW, RESPAWN_MS, ROUND_MS, SCORE, SIM_DT,
   SPAWN_SHIELD_MS, TILE,
@@ -94,8 +94,6 @@ export interface Outbox {
   broadcast(msg: ServerMsg): void;
 }
 
-const ARROW = { speed: 1.6, ttl: 650, dmg: 20, knock: 0.55 };
-const ORB = { speed: 0.78, ttl: 1050, dmg: 24, knock: 0.7, splash: 80, splashDmg: 14 };
 const SWORD = { range: 118, arc: 1.15, dmg: 38, knock: 1.25 };
 const SPIN = { range: 140, dmg: 30, knock: 1.5 };
 const BOMB = { fuse: 1000, friction: 0.004, radius: 170, maxDmg: 64, minDmg: 14, maxRange: 540 };

@@ -84,7 +84,8 @@ describe('world', () => {
     const a = world.join('Alice', 'archer');
     const b = world.join('Bob', 'warrior');
     duel(a, b, 300);
-    run(4000, (p) => (p === a ? { keys: Key.Primary, aim: 0 } : null));
+    // A full-health warrior takes 13 arrows.
+    run(8000, (p) => (p === a ? { keys: Key.Primary, aim: 0 } : null));
     expect(b.alive).toBe(false);
     expect(a.kills).toBe(1);
     expect(a.score).toBe(3);

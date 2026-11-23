@@ -1,4 +1,4 @@
-import { CLASSES, type ClassId } from '../shared/classes';
+import { ARROW, CLASSES, ORB, type ClassId } from '../shared/classes';
 import { HURT, INTERP_DELAY, SIM_DT } from '../shared/constants';
 import { MAP, shotBlocked } from '../shared/map';
 import {
@@ -24,7 +24,7 @@ const WIZARD_LINES = [
   'Mind your own bombs. The isle has no mercy for the careless.',
   'Hold TAB to see who rules the isle.',
 ];
-const LOCAL_PROJ = { [ProjKind.Arrow]: { speed: 1.6, ttl: 650 }, [ProjKind.Orb]: { speed: 0.78, ttl: 1050 } };
+const LOCAL_PROJ = { [ProjKind.Arrow]: ARROW, [ProjKind.Orb]: ORB };
 
 interface Snap {
   st: number;

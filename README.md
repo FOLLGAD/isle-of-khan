@@ -32,7 +32,7 @@ On phones and tablets: the left stick moves, the right stick aims and fires, and
 | | Archer | Warrior | Mage |
 | --- | --- | --- | --- |
 | HP | 100 | 200 | 100 |
-| Primary (hold LMB) | Bow: fast arrows, a little less accurate on the run | Sword: wide cleave with heavy knockback | Arcane orb: slow, bursts on impact and splashes nearby enemies |
+| Primary (hold LMB) | Bow: longest range, a little less accurate on the run | Sword: wide cleave with heavy knockback | Arcane orb: slow, bursts on impact and splashes nearby enemies |
 | Secondary (RMB) | Bombs | Bombs | Bombs |
 | Special (Space) | Dash | Whirlwind: hits everything around you | Blink toward the cursor, even across water |
 
