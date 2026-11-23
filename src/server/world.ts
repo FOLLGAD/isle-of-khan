@@ -35,6 +35,8 @@ export interface Player {
   budget: number;
   ack: number;
   lastChat: number;
+  /** Server time of the world this player was looking at when making their latest inputs. */
+  viewTime: number;
   /** Set for computer-controlled players. */
   bot: BotBrain | null;
   /** Simulation time a bot has not turned into inputs yet. */
@@ -121,6 +123,10 @@ export interface Outbox {
 }
 
 const SWORD = { range: 118, arc: 1.15, dmg: 32, knock: 1.25 };
+/** Within this distance (beyond the target's own radius) a sword swing hits regardless of aim. */
+const MELEE_CONTACT = 44;
+/** How far back human swings may be judged (ms). */
+const TRAIL_MS = 400;
 const SPIN = { range: 140, dmg: 26, knock: 1.5 };
 const BOMB = { fuse: 1000, friction: 0.004, radius: 170, maxDmg: 64, minDmg: 14, maxRange: 540 };
 /** Monsters. `lift` is the height of their middle, `radius` how wide they are to swords and blasts. */
@@ -211,7 +217,7 @@ export class World {
     const cls = isClassId(rawCls) ? rawCls : 'archer';
     const p: Player = {
       id: this.nextId++, name, cls, body: newBody(0, 0), hp: 0, alive: false, respawnAt: 0, shieldUntil: 0,
-      hurtUntil: 0, score: 0, kills: 0, deaths: 0, bogs: 0, ping: 0, queue: [], budget: 0, ack: 0, lastChat: 0,
+      hurtUntil: 0, score: 0, kills: 0, deaths: 0, bogs: 0, ping: 0, queue: [], budget: 0, ack: 0, lastChat: 0, viewTime: 0,
       bot: null, botAcc: 0, coins: 0, up: noUpgrades(), purseDirty: false,
     };
     if (bot) p.bot = new BotBrain(p.id, this.rand);
@@ -238,6 +244,8 @@ export class World {
     switch (msg.t) {
       case 'in':
         if (!Array.isArray(msg.i)) return;
+        // Never trust a view further back than the history we keep.
+        if (Number.isFinite(msg.vt)) p.viewTime = Math.max(this.now - TRAIL_MS, Math.min(this.now, msg.vt));
         for (const i of msg.i.slice(0, 30)) {
           if (!Array.isArray(i) || i.length !== 4 || !i.every(Number.isFinite)) return;
           if (i[0] <= p.ack || (p.queue.length && i[0] <= p.queue[p.queue.length - 1].seq)) continue;
@@ -409,12 +417,13 @@ export class World {
 
   private melee(p: Player, range: number, arc: number, dmg: number, knock: number, how: KillHow) {
     const x = p.body.x, y = p.body.y - CHEST, aim = p.body.aim;
-    // People see everyone else INTERP_DELAY plus half their ping in the past, so judge their swings
+    // People see everyone else in the past (interpolation plus network delay), so judge their swings
     // against where targets were on their screen. Bots perceive with their own delay instead.
-    const seenAt = this.now - (p.bot ? 0 : Math.min(250, INTERP_DELAY + p.ping / 2));
+    const seenAt = p.bot ? this.now : p.viewTime || this.now - INTERP_DELAY;
     const inArc = (tx: number, ty: number, radius: number) => {
       const d = Math.hypot(tx - x, ty - y);
-      return d <= range + radius && (arc >= Math.PI || d < radius || angleDiff(Math.atan2(ty - y, tx - x), aim) <= arc);
+      // Anyone pressed up against you gets hit whichever way you're facing.
+      return d <= range + radius && (arc >= Math.PI || d < radius + MELEE_CONTACT || angleDiff(Math.atan2(ty - y, tx - x), aim) <= arc);
     };
     for (const o of this.players.values()) {
       if (o === p || !o.alive) continue;
@@ -450,7 +459,7 @@ export class World {
       let h = this.trail.get(id);
       if (!h) this.trail.set(id, (h = []));
       h.push({ t: this.now, x, y });
-      while (h.length > 2 && h[1].t < this.now - 300) h.shift();
+      while (h.length > 2 && h[1].t < this.now - TRAIL_MS) h.shift();
     };
     const live = new Set<number>();
     for (const p of this.players.values()) if (p.alive) (keep(p.id, p.body.x, p.body.y), live.add(p.id));

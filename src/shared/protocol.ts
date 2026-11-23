@@ -121,7 +121,8 @@ export type ServerMsg =
 export type InputSnap = [number, number, number, number];
 
 export type ClientMsg =
-  | { t: 'in'; i: InputSnap[] }
+  /** `vt`: the server time of the world the player was looking at when making these inputs. */
+  | { t: 'in'; i: InputSnap[]; vt: number }
   | { t: 'chat'; m: string }
   | { t: 'respawn'; cls: ClassId }
   | { t: 'ping'; c: number; rtt: number }

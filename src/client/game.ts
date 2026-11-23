@@ -276,12 +276,13 @@ export class Game {
     const dt = Math.min(100, now - this.lastFrame);
     this.lastFrame = now;
     this.simulate(dt);
+    const rt = this.serverNow(now) - INTERP_DELAY;
     if (this.outbox.length >= 2 || (this.outbox.length && now - this.lastSend > 40)) {
-      this.conn.send({ t: 'in', i: this.outbox });
+      // `vt` tells the server which moment we were looking at, so it can judge our swings fairly.
+      this.conn.send({ t: 'in', i: this.outbox, vt: Math.round(rt) });
       this.outbox = [];
       this.lastSend = now;
     }
-    const rt = this.serverNow(now) - INTERP_DELAY;
     const scene = this.buildScene(rt, now, dt);
     while (this.events.length && this.events[0].at <= rt + 1) this.playEvent(this.events.shift()!.e, now, scene);
     this.updateLocalProjectiles(dt, scene);

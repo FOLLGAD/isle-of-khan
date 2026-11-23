@@ -21,7 +21,7 @@ function setup() {
         const i = inputs(p);
         if (!i) continue;
         const batch = [1, 2].map(() => [++seq, i.keys, i.aim, i.dist ?? 0] as [number, number, number, number]);
-        world.handle(p.id, { t: 'in', i: batch });
+        world.handle(p.id, { t: 'in', i: batch, vt: now - 100 });
       }
       now += TICK_DT;
       world.tick(now);
@@ -90,7 +90,7 @@ describe('world', () => {
     const x0 = p.body.x;
     // A cheating client sends 30 inputs per message.
     for (let i = 0; i < 20; i++) {
-      world.handle(p.id, { t: 'in', i: Array.from({ length: 30 }, (_, j) => [i * 30 + j + 1, Key.Right, 0, 0] as [number, number, number, number]) });
+      world.handle(p.id, { t: 'in', i: Array.from({ length: 30 }, (_, j) => [i * 30 + j + 1, Key.Right, 0, 0] as [number, number, number, number]), vt: world.now });
       run(TICK_DT);
     }
     const maxSteps = (20 * TICK_DT) / SIM_DT + 16;
@@ -119,6 +119,31 @@ describe('world', () => {
     run(TICK_DT * 2, (p) => (p === a ? { keys: Key.Primary, aim: Math.PI } : null));
     expect(b.hp).toBe(CLASSES.archer.hp);
     run(1000, (p) => (p === a ? { keys: Key.Primary, aim: 0 } : null));
+    expect(b.hp).toBeLessThan(CLASSES.archer.hp);
+  });
+
+  it('sword hits someone pressed up against you whichever way you face', () => {
+    const { world, run, duel } = setup();
+    const a = world.join('A', 'warrior');
+    const b = world.join('B', 'archer');
+    duel(a, b, 50);
+    run(TICK_DT * 2, (p) => (p === a ? { keys: Key.Primary, aim: Math.PI / 2 } : null));
+    expect(b.hp).toBeLessThan(CLASSES.archer.hp);
+  });
+
+  it('judges swings by the moment the player was looking at', () => {
+    const { world, run, duel } = setup();
+    const a = world.join('A', 'warrior');
+    const b = world.join('B', 'archer');
+    duel(a, b, 90);
+    run(500);
+    const sawAt = world.now;
+    // B walks off and stays away for 200 ms, but A's screen (200 ms behind, e.g. on a slow
+    // connection) still shows B in reach when A swings.
+    b.body.x += 220;
+    run(200);
+    world.handle(a.id, { t: 'in', i: [[a.ack + 1, Key.Primary, 0, 0]], vt: sawAt });
+    run(TICK_DT);
     expect(b.hp).toBeLessThan(CLASSES.archer.hp);
   });
 
