@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <title>Isle of Khan</title>
+    <meta name="description" content="A multiplayer pixel-art island brawl. Archers, warriors and mages fight bogs and each other for the Khan's crown." />
+    <meta name="theme-color" content="#0075fd" />
+    <link rel="icon" type="image/png" href="/assets/sprites/favicon.png" />
+    <link rel="preload" href="/assets/fonts/fffforwa.ttf" as="font" type="font/ttf" crossorigin />
+  </head>
+  <body>
+    <canvas id="game" tabindex="1"></canvas>
+
+    <div id="menu">
+      <form id="menu-form" class="menu-panel" autocomplete="off">
+        <h1 class="title">Isle of Khan</h1>
+        <p class="tagline">Wash ashore. Fight for the crown.</p>
+        <hr />
+        <input id="name" type="text" placeholder="Enter nickname" spellcheck="false" autofocus />
+        <div id="menu-classes" class="classes"></div>
+        <button id="play" type="submit" class="btn btn-primary">Enter Game</button>
+        <button id="play-friends" type="button" class="btn btn-link">Play with friends</button>
+        <p id="room-note" class="note"></p>
+        <p id="menu-error" class="error"></p>
+        <p id="online" class="note"></p>
+      </form>
+      <div class="controls-help">
+        <span><b>WASD</b> move</span><span><b>Mouse</b> aim</span><span><b>LMB</b> attack</span><span><b>RMB</b> bomb</span>
+        <span><b>SPACE</b> power</span><span><b>TAB</b> scores</span><span><b>ENTER</b> chat</span>
+      </div>
+    </div>
+
+    <div id="hud" hidden>
+      <div id="leaderboard"><h3>Leaderboard</h3><ol id="leaderboard-list"></ol></div>
+      <div id="round-info"><div id="timer"></div><div id="khan-info"></div></div>
+      <div id="top-right">
+        <canvas id="minimap" width="204" height="204"></canvas>
+        <ul id="feed"></ul>
+      </div>
+      <div id="big-messages"></div>
+      <div id="chat">
+        <ul id="chat-list"></ul>
+        <form id="chat-form" autocomplete="off"><input id="chat-input" type="text" maxlength="120" placeholder="Press Enter to chat" /></form>
+      </div>
+      <div id="hotbar">
+        <div id="hp"><div id="hp-fill"></div><span id="hp-text"></span></div>
+        <div class="slots">
+          <div class="slot" id="slot-primary"><img id="slot-primary-img" alt="" /><div class="cd"></div><span class="cd-text"></span><span class="key">LMB</span></div>
+          <div class="slot" id="slot-secondary" title="Bomb"><img src="/assets/sprites/bomb.png" alt="" /><div class="cd"></div><span class="cd-text"></span><span class="key">RMB</span></div>
+          <div class="slot" id="slot-special"><img id="slot-special-img" alt="" /><div class="cd"></div><span class="cd-text"></span><span class="key">SPACE</span></div>
+        </div>
+      </div>
+      <div class="corner-buttons"><button id="chat-button" class="icon-btn" title="Chat">💬</button><button id="menu-button" class="icon-btn" title="Menu (Esc)">☰</button></div>
+      <div id="hurt-vignette"></div>
+
+      <div id="scoreboard" class="panel" hidden>
+        <h1>Scoreboard</h1>
+        <table>
+          <thead><tr><th>#</th><th>Name</th><th>Class</th><th>Score</th><th>Kills</th><th>Deaths</th><th>Bogs</th><th>Ping</th></tr></thead>
+          <tbody id="scoreboard-body"></tbody>
+        </table>
+      </div>
+      <div id="death" class="panel" hidden>
+        <h2 id="death-title"></h2>
+        <p class="note">Pick a class</p>
+        <div id="death-classes" class="classes"></div>
+        <button id="respawn" class="btn btn-primary"></button>
+      </div>
+      <div id="round-end" class="panel" hidden>
+        <h1>Round over!</h1>
+        <h2 id="round-winner"></h2>
+        <table><tbody id="round-results"></tbody></table>
+        <p id="round-next" class="note"></p>
+      </div>
+      <div id="pause" class="panel" hidden>
+        <h2>Menu</h2>
+        <button id="resume" class="btn btn-primary">Back to the fight</button>
+        <button id="invite" class="btn">Copy invite link</button>
+        <button id="mute" class="btn"></button>
+        <button id="leave" class="btn btn-danger">Leave the isle</button>
+      </div>
+      <div id="disconnected" class="panel" hidden>
+        <h2>Lost connection to the isle</h2>
+        <button id="reconnect" class="btn btn-primary">Reconnect</button>
+      </div>
+      <div id="debug" hidden></div>
+      <div id="toast" hidden></div>
+    </div>
+
+    <div id="touch">
+      <div id="stick-move" class="stick"><div class="knob"></div></div>
+      <div id="stick-aim" class="stick"><div class="knob"></div></div>
+      <button id="btn-bomb" class="touch-btn"><img src="/assets/sprites/bomb.png" alt="Bomb" /></button>
+      <button id="btn-special" class="touch-btn">★</button>
+    </div>
+
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>

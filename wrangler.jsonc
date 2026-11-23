@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "isle-of-khan",
+  "main": "./src/server/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "assets": { "not_found_handling": "none" },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOMS", "class_name": "GameRoom" },
+      { "name": "LOBBY", "class_name": "Lobby" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom", "Lobby"] }],
+  "observability": { "enabled": true }
+}

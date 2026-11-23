@@ -1,24 +1,23 @@
 {
   "name": "isle-of-khan",
-  "version": "1.0.0",
-  "description": "A multiplayer action game",
-  "main": "server.js",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A multiplayer pixel-art island brawler. Runs on Cloudflare Workers + Durable Objects.",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server"
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "npm run build && vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.client.json",
+    "test": "vitest run"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/FOLLGAD/Isle-of-Khan.git"
-  },
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/FOLLGAD/Isle-of-Khan/issues"
-  },
-  "homepage": "https://github.com/FOLLGAD/Isle-of-Khan#readme",
-  "dependencies": {
-    "express": "^4.14.0",
-    "socketio": "^1.0.0"
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.70.1",
+    "@cloudflare/workers-types": "^5.20261123.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
   }
 }
