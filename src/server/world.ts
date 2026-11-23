@@ -330,7 +330,8 @@ export class World {
     const h: HeartSnap[] = this.hearts.filter((q) => near(q.x, q.y)).map((q) => [q.id, q.x, q.y]);
     const c: CoinSnap[] = this.drops.filter((q) => near(q.x, q.y)).map((q) => [q.id, q.x, q.y, q.value]);
     const e = this.events.filter((ev) => near(ev.x, ev.y)).map((ev) => ev.data);
-    return { t: 's', st: this.now, ack: me.ack, me: me.alive ? packBody(me.body) : null, p, m, pr, b, h, c, e };
+    const s = this.mobs.find((q) => q.kind === 'sam');
+    return { t: 's', st: this.now, ack: me.ack, me: me.alive ? packBody(me.body) : null, p, m, pr, b, h, c, sam: s ? [Math.round(s.x), Math.round(s.y)] : null, e };
   }
 
   flushEvents() {

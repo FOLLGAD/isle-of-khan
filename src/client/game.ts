@@ -100,6 +100,8 @@ export class Game {
   khan = 0;
   myHp = 0;
   myMaxHp = 0;
+  /** Samuel's position while he's loose, for the minimap. */
+  sam: [number, number] | null = null;
   myFlags = 0;
   coins = 0;
   up = noUpgrades();
@@ -220,6 +222,7 @@ export class Game {
       coins: s.c,
     };
     this.snaps.push(snap);
+    this.sam = s.sam;
     while (this.snaps.length > 2 && this.snaps[1].st < s.st - 1000) this.snaps.shift();
     for (const e of s.e) this.events.push({ at: s.st, e });
 

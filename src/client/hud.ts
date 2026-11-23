@@ -342,7 +342,7 @@ export class Hud {
       this.drawMinimap(game);
     }
     if (this.debug) {
-      $('debug').textContent = `fps ${this.fps.toFixed(0)}  ping ${game.rtt.toFixed(0)}ms  room ${game.room}  pos ${b.x.toFixed(0)},${b.y.toFixed(0)}`;
+      $('debug').textContent = `fps ${this.fps.toFixed(0)}  ping ${game.rtt.toFixed(0)}ms  room ${game.room}  pos ${b.x.toFixed(0)},${b.y.toFixed(0)}${game.sam ? `  samuel ${game.sam[0]},${game.sam[1]}` : ''}`;
     }
   }
 
@@ -383,6 +383,10 @@ export class Hud {
     g.drawImage(this.minimapBase, pad, pad);
     g.fillStyle = '#7b4fd6';
     g.fillRect(pad + (MAP.wizard.x / TILE) * s - 2, pad + (MAP.wizard.y / TILE) * s - 2, 4, 4);
+    if (game.sam && Math.floor(performance.now() / 300) % 2 === 0) {
+      g.fillStyle = '#e0a0ff';
+      g.fillRect(pad + (game.sam[0] / TILE) * s - 3, pad + (game.sam[1] / TILE) * s - 3, 6, 6);
+    }
     for (const p of game.minimapPlayers()) {
       g.fillStyle = p.me ? 'blue' : p.khan ? '#ffd23f' : 'red';
       g.fillRect(pad + (p.x / TILE) * s - s, pad + (p.y / TILE) * s - s, s * 2 + (p.me ? 1 : 0), s * 2 + (p.me ? 1 : 0));

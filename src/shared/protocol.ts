@@ -101,6 +101,8 @@ export type ServerMsg =
       b: BombSnap[];
       h: HeartSnap[];
       c: CoinSnap[];
+      /** Where Samuel is, for everyone's minimap, while he's loose. */
+      sam: [number, number] | null;
       e: EventSnap[];
     }
   | { t: 'roster'; r: RosterEntry[]; khan: number }
