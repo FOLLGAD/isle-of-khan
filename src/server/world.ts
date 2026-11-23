@@ -5,11 +5,15 @@ import {
 } from '../shared/constants';
 import { isShallow, MAP, moveBox, randomSpot, shotBlocked, WADE_SPEED, type GameMap } from '../shared/map';
 import {
-  Ev, MF, PF, ProjKind, type BombSnap, type ClientMsg, type EventSnap, type HeartSnap, type KillHow, type MobSnap,
-  type PlayerSnap, type ProjSnap, type RosterEntry, type RoundResult, type ServerMsg,
+  Ev, MF, PF, ProjKind, type BombSnap, type ClientMsg, type CoinSnap, type EventSnap, type HeartSnap, type KillHow,
+  type MobSnap, type PlayerSnap, type ProjSnap, type RosterEntry, type RoundResult, type ServerMsg,
 } from '../shared/protocol';
+import {
+  isItemId, ITEMS, maxHp, MOB_HP, noUpgrades, powderMul, priceOf, SHOP_RANGE, weaponMul, type ItemId, type MobKind,
+  type Upgrades,
+} from '../shared/shop';
 import { Act, newBody, packBody, stepPlayer, type Body, type Input } from '../shared/sim';
-import { BOT_NAMES, BotBrain, TACTICS, type Tactics } from './bot';
+import { BOT_NAMES, BotBrain, botWish, findPath, TACTICS, type Tactics } from './bot';
 
 export interface Player {
   id: number;
@@ -35,6 +39,10 @@ export interface Player {
   bot: BotBrain | null;
   /** Simulation time a bot has not turned into inputs yet. */
   botAcc: number;
+  coins: number;
+  up: Upgrades;
+  /** Coins or upgrades changed since we last told this player. */
+  purseDirty: boolean;
 }
 
 export interface Mob {
@@ -44,7 +52,14 @@ export interface Mob {
   kx: number;
   ky: number;
   hp: number;
-  big: boolean;
+  kind: MobKind;
+  /** Coins Samuel has stolen; he drops them when he dies. */
+  stolen: number;
+  /** Samuel runs away after a theft until this time. */
+  fleeUntil: number;
+  /** Samuel finds his way around trees; bogs just bump along. */
+  path: { x: number; y: number }[];
+  pathAt: number;
   /** Wander heading and time left on it. */
   wx: number;
   wy: number;
@@ -65,6 +80,8 @@ export interface Proj {
   vx: number;
   vy: number;
   ttl: number;
+  /** Damage multiplier from the owner's upgrades when it was fired. */
+  mul: number;
 }
 
 export interface Bomb {
@@ -75,12 +92,21 @@ export interface Bomb {
   vx: number;
   vy: number;
   fuse: number;
+  /** Size and damage multiplier from the thrower's black powder. */
+  mul: number;
 }
 
 export interface Heart {
   id: number;
   x: number;
   y: number;
+}
+
+export interface CoinDrop {
+  id: number;
+  x: number;
+  y: number;
+  value: number;
 }
 
 interface WorldEvent {
@@ -94,15 +120,23 @@ export interface Outbox {
   broadcast(msg: ServerMsg): void;
 }
 
-const SWORD = { range: 118, arc: 1.15, dmg: 35, knock: 1.25 };
-const SPIN = { range: 140, dmg: 28, knock: 1.5 };
+const SWORD = { range: 118, arc: 1.15, dmg: 32, knock: 1.25 };
+const SPIN = { range: 140, dmg: 26, knock: 1.5 };
 const BOMB = { fuse: 1000, friction: 0.004, radius: 170, maxDmg: 64, minDmg: 14, maxRange: 540 };
-const BOG = {
-  small: { hp: 45, speed: 0.2, hw: 22, hh: 12, dmg: 10, knock: 0.9, hurt: { l: -26, r: 26, t: -112, b: 10 } },
-  big: { hp: 120, speed: 0.15, hw: 34, hh: 16, dmg: 18, knock: 1.3, hurt: { l: -40, r: 40, t: -170, b: 14 } },
-  sight: 620,
-  attackCd: 900,
+/** Monsters. `lift` is the height of their middle, `radius` how wide they are to swords and blasts. */
+const MOBS: Record<MobKind, {
+  speed: number; hw: number; hh: number; dmg: number; knock: number; hurt: { l: number; r: number; t: number; b: number };
+  lift: number; radius: number; weight: number; score: number; coins: number; sight: number;
+}> = {
+  bog: { speed: 0.2, hw: 22, hh: 12, dmg: 10, knock: 0.9, hurt: { l: -26, r: 26, t: -112, b: 10 }, lift: 48, radius: 28, weight: 1, score: SCORE.bog, coins: 1, sight: 620 },
+  big: { speed: 0.15, hw: 34, hh: 16, dmg: 18, knock: 1.3, hurt: { l: -40, r: 40, t: -170, b: 14 }, lift: 70, radius: 40, weight: 0.55, score: SCORE.bigBog, coins: 3, sight: 620 },
+  // Samuel: small, quick, and after your coins.
+  sam: { speed: 0.36, hw: 14, hh: 10, dmg: 8, knock: 0.6, hurt: { l: -22, r: 22, t: -62, b: 10 }, lift: 30, radius: 22, weight: 1.2, score: 3, coins: 8, sight: 900 },
 };
+const MOB_ATTACK_CD = 900;
+const SAM_STEAL = 3;
+/** Kill bounties, paid in coins. */
+const BOUNTY = { kill: 2, khan: 3 };
 const HEAL = 25;
 /** Rooms are topped up with bots until there are this many fighters. */
 export const BOT_FILL = 6;
@@ -129,6 +163,7 @@ export class World {
   projs: Proj[] = [];
   bombs: Bomb[] = [];
   hearts: Heart[] = [];
+  drops: CoinDrop[] = [];
   events: WorldEvent[] = [];
   phase: 'play' | 'end' = 'play';
   phaseEndsAt: number;
@@ -139,6 +174,9 @@ export class World {
   private lastTick: number;
   private mobTimer = 0;
   private heartTimer = 0;
+  private coinTimer = 0;
+  /** Time until Samuel next shows up. */
+  private samTimer: number;
   private rosterDirty = true;
   private rosterTimer = 0;
   private botTimer = 0;
@@ -155,6 +193,11 @@ export class World {
     this.rand = opts.rand ?? Math.random;
     this.botFill = opts.botFill ?? BOT_FILL;
     this.tactics = opts.tactics ?? TACTICS;
+    this.samTimer = this.samDelay();
+  }
+
+  private samDelay() {
+    return 70_000 + this.rand() * 80_000;
   }
 
   join(rawName: unknown, rawCls: unknown, bot = false): Player {
@@ -169,7 +212,7 @@ export class World {
     const p: Player = {
       id: this.nextId++, name, cls, body: newBody(0, 0), hp: 0, alive: false, respawnAt: 0, shieldUntil: 0,
       hurtUntil: 0, score: 0, kills: 0, deaths: 0, bogs: 0, ping: 0, queue: [], budget: 0, ack: 0, lastChat: 0,
-      bot: null, botAcc: 0,
+      bot: null, botAcc: 0, coins: 0, up: noUpgrades(), purseDirty: false,
     };
     if (bot) p.bot = new BotBrain(p.id, this.rand);
     this.players.set(p.id, p);
@@ -216,6 +259,9 @@ export class World {
         this.spawn(p);
         this.rosterDirty = true;
         return;
+      case 'buy':
+        if (isItemId(msg.item)) this.buy(p, msg.item);
+        return;
       case 'ping':
         if (!Number.isFinite(msg.c)) return;
         if (Number.isFinite(msg.rtt)) p.ping = Math.max(0, Math.min(9999, Math.round(msg.rtt)));
@@ -235,7 +281,14 @@ export class World {
       this.tickProjectiles(dt);
       this.tickBombs(dt);
       this.tickMobs(dt);
+      this.tickSam(dt);
       this.tickHearts(dt);
+      this.tickCoins(dt);
+    }
+    for (const p of this.players.values()) {
+      if (!p.purseDirty) continue;
+      p.purseDirty = false;
+      if (!p.bot) this.out.send(p.id, { t: 'purse', coins: p.coins, up: p.up });
     }
     this.recordTrail();
     this.updateKhan();
@@ -262,12 +315,12 @@ export class World {
       if (o.body.dash > 0) f |= PF.Dash;
       if (this.khan === o.id) f |= PF.Khan;
       if (this.now < o.hurtUntil) f |= PF.Hurt;
-      p.push([o.id, r1(o.body.x), r1(o.body.y), Math.round(o.body.aim * 100) / 100, Math.ceil(o.hp), f]);
+      p.push([o.id, r1(o.body.x), r1(o.body.y), Math.round(o.body.aim * 100) / 100, Math.ceil(o.hp), f, maxHp(o.cls, o.up)]);
     }
     const m: MobSnap[] = [];
     for (const b of this.mobs) {
       if (!near(b.x, b.y)) continue;
-      const f = (b.big ? MF.Big : 0) | (this.now < b.hurtUntil ? MF.Hurt : 0) | (b.moving ? MF.Moving : 0) | (b.faceLeft ? MF.FaceLeft : 0);
+      const f = (b.kind === 'big' ? MF.Big : b.kind === 'sam' ? MF.Sam : 0) | (this.now < b.hurtUntil ? MF.Hurt : 0) | (b.moving ? MF.Moving : 0) | (b.faceLeft ? MF.FaceLeft : 0);
       m.push([b.id, r1(b.x), r1(b.y), Math.ceil(b.hp), f]);
     }
     const pr: ProjSnap[] = this.projs
@@ -275,8 +328,9 @@ export class World {
       .map((q) => [q.id, q.kind, r1(q.x), r1(q.y), Math.round(q.vx * 1000) / 1000, Math.round(q.vy * 1000) / 1000, q.owner, q.seq]);
     const b: BombSnap[] = this.bombs.filter((q) => near(q.x, q.y)).map((q) => [q.id, r1(q.x), r1(q.y), Math.round((q.fuse / BOMB.fuse) * 100)]);
     const h: HeartSnap[] = this.hearts.filter((q) => near(q.x, q.y)).map((q) => [q.id, q.x, q.y]);
+    const c: CoinSnap[] = this.drops.filter((q) => near(q.x, q.y)).map((q) => [q.id, q.x, q.y, q.value]);
     const e = this.events.filter((ev) => near(ev.x, ev.y)).map((ev) => ev.data);
-    return { t: 's', st: this.now, ack: me.ack, me: me.alive ? packBody(me.body) : null, p, m, pr, b, h, e };
+    return { t: 's', st: this.now, ack: me.ack, me: me.alive ? packBody(me.body) : null, p, m, pr, b, h, c, e };
   }
 
   flushEvents() {
@@ -292,7 +346,7 @@ export class World {
       this.mobs.some((b) => Math.hypot(b.x - x, b.y - y) < 350),
     );
     p.body = newBody(spot.x, spot.y);
-    p.hp = CLASSES[p.cls].hp;
+    p.hp = maxHp(p.cls, p.up);
     p.alive = true;
     p.shieldUntil = this.now + SPAWN_SHIELD_MS;
     this.emit(spot.x, spot.y, [Ev.Spawn, spot.x, spot.y]);
@@ -319,7 +373,7 @@ export class World {
     if (acts & Act.Primary) {
       if (p.cls === 'warrior') {
         this.emit(b.x, b.y, [Ev.Swing, p.id, Math.round(input.aim * 100) / 100]);
-        this.melee(p, SWORD.range, SWORD.arc, SWORD.dmg, SWORD.knock, 'sword');
+        this.melee(p, SWORD.range, SWORD.arc, SWORD.dmg * weaponMul(p.up), SWORD.knock, 'sword');
       } else {
         const def = p.cls === 'archer' ? ARROW : ORB;
         const kind = p.cls === 'archer' ? ProjKind.Arrow : ProjKind.Orb;
@@ -327,7 +381,7 @@ export class World {
         const a = input.aim + (p.cls === 'archer' && b.moving ? (this.rand() - 0.5) * 0.08 : 0);
         this.projs.push({
           id: this.nextId++, kind, owner: p.id, seq: input.seq, x: b.x + ax * 24, y: cy + ay * 24,
-          vx: Math.cos(a) * def.speed, vy: Math.sin(a) * def.speed, ttl: def.ttl,
+          vx: Math.cos(a) * def.speed, vy: Math.sin(a) * def.speed, ttl: def.ttl, mul: weaponMul(p.up),
         });
         this.emit(b.x, b.y, [Ev.Shoot, p.id, kind]);
       }
@@ -336,14 +390,14 @@ export class World {
       // Pick the launch speed so the bomb comes to rest near the cursor when the fuse runs out.
       const travel = (1 - Math.exp(-BOMB.friction * BOMB.fuse)) / BOMB.friction;
       const v = Math.min(input.dist, BOMB.maxRange) / travel;
-      this.bombs.push({ id: this.nextId++, owner: p.id, x: b.x + ax * 20, y: b.y + ay * 20, vx: ax * v, vy: ay * v, fuse: BOMB.fuse });
+      this.bombs.push({ id: this.nextId++, owner: p.id, x: b.x + ax * 20, y: b.y + ay * 20, vx: ax * v, vy: ay * v, fuse: BOMB.fuse, mul: powderMul(p.up) });
       this.emit(b.x, b.y, [Ev.Throw, p.id]);
     }
     if (acts & Act.Special) {
       const kind = CLASSES[p.cls].special.kind;
       if (kind === 'spin') {
         this.emit(b.x, b.y, [Ev.Spin, p.id]);
-        this.melee(p, SPIN.range, Math.PI, SPIN.dmg, SPIN.knock, 'spin');
+        this.melee(p, SPIN.range, Math.PI, SPIN.dmg * weaponMul(p.up), SPIN.knock, 'spin');
       } else if (kind === 'blink') {
         this.emit(b.x, b.y, [Ev.Blink, p.id, r1(from.x), r1(from.y), r1(b.x), r1(b.y)]);
       } else {
@@ -370,8 +424,8 @@ export class World {
     }
     for (const b of [...this.mobs]) {
       const seen = this.positionAt(b.id, seenAt) ?? b;
-      const lift = b.big ? 70 : 48;
-      if (!inArc(seen.x, seen.y - lift, b.big ? 40 : 28)) continue;
+      const { lift, radius } = MOBS[b.kind];
+      if (!inArc(seen.x, seen.y - lift, radius)) continue;
       const d = Math.hypot(b.x - x, b.y - lift - y) || 1;
       this.damageMob(b, dmg, p, (b.x - x) / d, (b.y - lift - y) / d, knock);
     }
@@ -405,7 +459,7 @@ export class World {
 
   private damagePlayer(t: Player, amount: number, by: Player | null, dx: number, dy: number, knock: number, how: KillHow) {
     if (!t.alive || this.now < t.shieldUntil || this.phase !== 'play') return;
-    if (by === t) amount = Math.round(amount * 0.5);
+    amount = Math.round(by === t ? amount * 0.5 : amount);
     t.hp -= amount;
     t.hurtUntil = this.now + 140;
     t.body.kx += dx * knock;
@@ -419,14 +473,23 @@ export class World {
     t.queue.length = 0;
     this.emit(t.body.x, t.body.y, [Ev.Die, r1(t.body.x), r1(t.body.y), 0, 0]);
     this.hearts.push({ id: this.nextId++, x: Math.round(t.body.x), y: Math.round(t.body.y) });
+    // Half your purse spills where you fall.
+    const spilled = Math.floor(t.coins / 2);
+    if (spilled > 0) {
+      t.coins -= spilled;
+      t.purseDirty = true;
+      this.dropCoins(t.body.x + 20, t.body.y, spilled);
+    }
     const wasKhan = this.khan === t.id;
     if (by && by !== t) {
       by.kills++;
       by.score += SCORE.kill + (wasKhan ? SCORE.khanBonus : 0);
+      by.coins += BOUNTY.kill + (wasKhan ? BOUNTY.khan : 0);
+      by.purseDirty = true;
     } else if (by === t) {
       t.score = Math.max(0, t.score + SCORE.suicide);
     }
-    const killer = how === 'bog' ? 'a Bog' : by && by !== t ? by.name : null;
+    const killer = how === 'bog' ? 'a Bog' : how === 'sam' ? 'Samuel' : by && by !== t ? by.name : null;
     this.out.broadcast({ t: 'kill', k: killer, v: t.name, kid: by?.id ?? 0, vid: t.id, how });
     if (by?.bot && by !== t) {
       const catchphrase = BOT_CATCHPHRASES[by.name];
@@ -439,21 +502,31 @@ export class World {
 
   private damageMob(b: Mob, amount: number, by: Player | null, dx: number, dy: number, knock: number) {
     if (!this.mobs.includes(b) || this.phase !== 'play') return;
+    const def = MOBS[b.kind];
+    amount = Math.round(amount);
     b.hp -= amount;
     b.hurtUntil = this.now + 140;
-    const weight = b.big ? 0.55 : 1;
-    b.kx += dx * knock * weight;
-    b.ky += dy * knock * weight;
-    this.emit(b.x, b.y, [Ev.Hit, r1(b.x), r1(b.y - (b.big ? 180 : 120)), amount, 1, b.id]);
+    b.kx += dx * knock * def.weight;
+    b.ky += dy * knock * def.weight;
+    this.emit(b.x, b.y, [Ev.Hit, r1(b.x), r1(b.y + def.hurt.t - 10), amount, 1, b.id]);
     if (b.hp > 0) return;
     this.mobs.splice(this.mobs.indexOf(b), 1);
-    this.emit(b.x, b.y, [Ev.Die, r1(b.x), r1(b.y), 1, b.big ? 1 : 0]);
+    this.emit(b.x, b.y, [Ev.Die, r1(b.x), r1(b.y), 1, b.kind === 'big' ? 1 : 0]);
     if (this.rand() < 0.35) this.hearts.push({ id: this.nextId++, x: Math.round(b.x), y: Math.round(b.y) });
+    this.dropCoins(b.x, b.y, def.coins + b.stolen);
+    if (b.kind === 'sam') {
+      this.samTimer = this.samDelay();
+      this.out.broadcast({ t: 'announce', m: by ? `${by.name} caught Samuel!` : 'Samuel got away... for now.' });
+    }
     if (by) {
       by.bogs++;
-      by.score += b.big ? SCORE.bigBog : SCORE.bog;
+      by.score += def.score;
       this.rosterDirty = true;
     }
+  }
+
+  private dropCoins(x: number, y: number, value: number) {
+    if (value > 0) this.drops.push({ id: this.nextId++, x: Math.round(x), y: Math.round(y), value });
   }
 
   // --- projectiles & bombs -------------------------------------------------------------------
@@ -483,17 +556,17 @@ export class World {
           const rx = q.x - o.body.x, ry = q.y - o.body.y;
           if (rx < HURT.left || rx > HURT.right || ry < HURT.top || ry > HURT.bottom) continue;
           alive = false;
-          this.damagePlayer(o, def.dmg, owner, dx, dy, def.knock, q.kind === ProjKind.Arrow ? 'arrow' : 'orb');
+          this.damagePlayer(o, def.dmg * q.mul, owner, dx, dy, def.knock, q.kind === ProjKind.Arrow ? 'arrow' : 'orb');
           if (q.kind === ProjKind.Orb) this.orbBurst(q, owner, o);
           break;
         }
         if (!alive) break;
         for (const b of this.mobs) {
-          const box = b.big ? BOG.big.hurt : BOG.small.hurt;
+          const box = MOBS[b.kind].hurt;
           const rx = q.x - b.x, ry = q.y - b.y;
           if (rx < box.l || rx > box.r || ry < box.t || ry > box.b) continue;
           alive = false;
-          this.damageMob(b, def.dmg, owner, dx, dy, def.knock);
+          this.damageMob(b, def.dmg * q.mul, owner, dx, dy, def.knock);
           if (q.kind === ProjKind.Orb) this.orbBurst(q, owner, b);
           break;
         }
@@ -508,13 +581,13 @@ export class World {
     for (const o of this.players.values()) {
       if (o === direct || o.id === q.owner || !o.alive) continue;
       const d = Math.hypot(o.body.x - q.x, o.body.y - CHEST - q.y);
-      if (d < ORB.splash) this.damagePlayer(o, ORB.splashDmg, owner, (o.body.x - q.x) / (d || 1), (o.body.y - CHEST - q.y) / (d || 1), 0.5, 'orb');
+      if (d < ORB.splash) this.damagePlayer(o, ORB.splashDmg * q.mul, owner, (o.body.x - q.x) / (d || 1), (o.body.y - CHEST - q.y) / (d || 1), 0.5, 'orb');
     }
     for (const b of [...this.mobs]) {
       if (b === direct) continue;
-      const my = b.y - (b.big ? 70 : 48);
+      const my = b.y - MOBS[b.kind].lift;
       const d = Math.hypot(b.x - q.x, my - q.y);
-      if (d < ORB.splash + (b.big ? 20 : 0)) this.damageMob(b, ORB.splashDmg, owner, (b.x - q.x) / (d || 1), (my - q.y) / (d || 1), 0.5);
+      if (d < ORB.splash + MOBS[b.kind].radius - 28) this.damageMob(b, ORB.splashDmg * q.mul, owner, (b.x - q.x) / (d || 1), (my - q.y) / (d || 1), 0.5);
     }
   }
 
@@ -536,12 +609,13 @@ export class World {
 
   private explode(q: Bomb) {
     const owner = this.players.get(q.owner) ?? null;
-    this.emit(q.x, q.y, [Ev.Boom, r1(q.x), r1(q.y)]);
+    this.emit(q.x, q.y, [Ev.Boom, r1(q.x), r1(q.y), Math.round(q.mul * 100)]);
+    const radius = BOMB.radius * q.mul;
     const hit = (tx: number, ty: number) => {
       const d = Math.hypot(tx - q.x, ty - q.y);
-      if (d >= BOMB.radius) return null;
-      const f = 1 - d / BOMB.radius;
-      return { dmg: Math.round(BOMB.minDmg + (BOMB.maxDmg - BOMB.minDmg) * f), knock: 0.4 + 1.4 * f, dx: (tx - q.x) / (d || 1), dy: (ty - q.y) / (d || 1) };
+      if (d >= radius) return null;
+      const f = 1 - d / radius;
+      return { dmg: (BOMB.minDmg + (BOMB.maxDmg - BOMB.minDmg) * f) * q.mul, knock: 0.4 + 1.4 * f, dx: (tx - q.x) / (d || 1), dy: (ty - q.y) / (d || 1) };
     };
     for (const o of this.players.values()) {
       if (!o.alive) continue;
@@ -560,22 +634,35 @@ export class World {
     const alive = [...this.players.values()].filter((p) => p.alive);
     const target = Math.min(22, 5 + 2 * alive.length);
     this.mobTimer -= dt;
-    if (this.mobs.length < target && this.mobTimer <= 0) {
+    if (this.mobs.filter((b) => b.kind !== 'sam').length < target && this.mobTimer <= 0) {
       this.mobTimer = 1200;
       this.spawnMob(alive);
     }
     const decay = Math.pow(0.86, dt / SIM_DT);
     for (const b of this.mobs) {
-      const def = b.big ? BOG.big : BOG.small;
-      let prey: Player | null = null, best = BOG.sight, nearest: Player | null = null, nearestD = Infinity;
+      const def = MOBS[b.kind];
+      let prey: Player | null = null, best = def.sight, nearest: Player | null = null, nearestD = Infinity;
       for (const p of alive) {
-        const d = Math.hypot(p.body.x - b.x, p.body.y - b.y);
+        // Samuel goes for whoever has the fattest purse.
+        const d = Math.hypot(p.body.x - b.x, p.body.y - b.y) - (b.kind === 'sam' ? p.coins * 25 : 0);
         if (d < best) (best = d), (prey = p);
         if (d < nearestD) (nearestD = d), (nearest = p);
       }
       let vx = 0, vy = 0;
       b.wt -= dt;
-      if (prey && b.wt <= 0) {
+      if (prey && this.now < b.fleeUntil) {
+        const dx = b.x - prey.body.x, dy = b.y - prey.body.y, d = Math.hypot(dx, dy) || 1;
+        (vx = (dx / d) * def.speed), (vy = (dy / d) * def.speed);
+      } else if (prey && b.kind === 'sam') {
+        if (this.now - b.pathAt > 500) {
+          b.path = findPath(this.map, b.x, b.y, prey.body.x, prey.body.y) ?? [];
+          b.pathAt = this.now;
+        }
+        while (b.path.length > 1 && Math.hypot(b.path[0].x - b.x, b.path[0].y - b.y) < 24) b.path.shift();
+        const goal = b.path.length > 1 ? b.path[0] : prey.body;
+        const dx = goal.x - b.x, dy = goal.y - b.y, d = Math.hypot(dx, dy) || 1;
+        if (b.path.length > 1 || d > def.hw + PLAYER_HW) (vx = (dx / d) * def.speed), (vy = (dy / d) * def.speed);
+      } else if (prey && b.wt <= 0) {
         const dx = prey.body.x - b.x, dy = prey.body.y - b.y, d = Math.hypot(dx, dy) || 1;
         if (d > def.hw + PLAYER_HW) (vx = (dx / d) * def.speed), (vy = (dy / d) * def.speed);
       } else {
@@ -608,26 +695,85 @@ export class World {
       b.moving = Math.abs(vx) + Math.abs(vy) > 0.02;
       if (Math.abs(vx) > 0.02) b.faceLeft = vx < 0;
       b.atkCd -= dt;
-      if (prey && b.atkCd <= 0 && Math.abs(prey.body.x - b.x) < def.hw + PLAYER_HW + 12 && Math.abs(prey.body.y - b.y) < def.hh + PLAYER_HH + 18) {
-        b.atkCd = BOG.attackCd;
+      if (prey && b.atkCd <= 0 && this.now >= b.fleeUntil && Math.abs(prey.body.x - b.x) < def.hw + PLAYER_HW + 12 && Math.abs(prey.body.y - b.y) < def.hh + PLAYER_HH + 18) {
+        b.atkCd = MOB_ATTACK_CD;
         const dx = prey.body.x - b.x, dy = prey.body.y - b.y, d = Math.hypot(dx, dy) || 1;
-        this.damagePlayer(prey, def.dmg, null, dx / d, dy / d, def.knock, 'bog');
+        if (b.kind === 'sam' && prey.coins > 0 && this.now >= prey.shieldUntil) {
+          const n = Math.min(SAM_STEAL, prey.coins);
+          prey.coins -= n;
+          prey.purseDirty = true;
+          b.stolen += n;
+          b.fleeUntil = this.now + 2500;
+          this.emit(prey.body.x, prey.body.y, [Ev.Steal, r1(prey.body.x), r1(prey.body.y), prey.id, n]);
+        }
+        this.damagePlayer(prey, def.dmg, null, dx / d, dy / d, def.knock, b.kind === 'sam' ? 'sam' : 'bog');
       }
     }
   }
 
-  private spawnMob(players: Player[]) {
-    const big = this.rand() < 0.18;
-    const def = big ? BOG.big : BOG.small;
+  private spawnMob(players: Player[], kind: MobKind = this.rand() < 0.18 ? 'big' : 'bog') {
+    const def = MOBS[kind];
     // Just out of sight of everyone, but close enough to someone that they'll meet soon.
     const spot = randomSpot(this.map, this.rand, def.hw, def.hh, (x, y) => {
       const d = players.map((p) => Math.hypot(p.body.x - x, p.body.y - y));
       return d.some((v) => v < 800) || (d.length > 0 && !d.some((v) => v < 1400));
     });
     this.mobs.push({
-      id: this.nextId++, x: spot.x, y: spot.y, kx: 0, ky: 0, hp: def.hp, big, wx: 0, wy: 0, wt: 0, atkCd: 0,
-      hurtUntil: 0, moving: false, faceLeft: false,
+      id: this.nextId++, x: spot.x, y: spot.y, kx: 0, ky: 0, hp: MOB_HP[kind], kind, stolen: 0, fleeUntil: 0, path: [], pathAt: 0, wx: 0, wy: 0,
+      wt: 0, atkCd: 0, hurtUntil: 0, moving: false, faceLeft: false,
     });
+  }
+
+  /** Every few minutes Samuel turns up to steal coins. Only one Samuel at a time. */
+  private tickSam(dt: number) {
+    if (this.mobs.some((b) => b.kind === 'sam')) return;
+    this.samTimer -= dt;
+    const alive = [...this.players.values()].filter((p) => p.alive);
+    if (this.samTimer > 0 || !alive.length) return;
+    this.samTimer = this.samDelay();
+    this.spawnMob(alive, 'sam');
+    this.out.broadcast({ t: 'announce', m: 'Samuel is loose on the isle! Guard your coins!' });
+  }
+
+  private tickCoins(dt: number) {
+    this.coinTimer -= dt;
+    if (this.coinTimer <= 0 && this.drops.length < 6 + this.players.size / 2) {
+      this.coinTimer = 4000;
+      const s = randomSpot(this.map, this.rand, 12, 12);
+      this.dropCoins(s.x + 16, s.y + 8, 1);
+    }
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      for (let i = this.drops.length - 1; i >= 0; i--) {
+        const c = this.drops[i];
+        if (Math.abs(c.x - p.body.x) > 36 || Math.abs(c.y - p.body.y) > 36) continue;
+        this.drops.splice(i, 1);
+        p.coins += c.value;
+        p.purseDirty = true;
+        this.emit(c.x, c.y, [Ev.Coin, c.x, c.y, p.id, c.value]);
+      }
+    }
+  }
+
+  /** Trade with the wizard. Returns whether the purchase went through. */
+  buy(p: Player, id: ItemId): boolean {
+    if (!p.alive || this.phase !== 'play') return false;
+    if (Math.hypot(p.body.x - this.map.wizard.x, p.body.y - this.map.wizard.y) > SHOP_RANGE) return false;
+    const price = priceOf(id, p.up);
+    if (price === null || p.coins < price) return false;
+    const max = maxHp(p.cls, p.up);
+    if (id === 'potion') {
+      if (p.hp >= max) return false;
+      p.hp = max;
+    } else {
+      p.up[id]++;
+      // New armor comes with the extra health, not just a bigger bar.
+      if (id === 'armor') p.hp += maxHp(p.cls, p.up) - max;
+    }
+    p.coins -= price;
+    p.purseDirty = true;
+    this.emit(p.body.x, p.body.y, [Ev.Buy, p.id, ITEMS.findIndex((i) => i.id === id)]);
+    return true;
   }
 
   private tickHearts(dt: number) {
@@ -638,7 +784,7 @@ export class World {
       this.hearts.push({ id: this.nextId++, x: s.x, y: s.y });
     }
     for (const p of this.players.values()) {
-      const max = CLASSES[p.cls].hp;
+      const max = maxHp(p.cls, p.up);
       if (!p.alive || p.hp >= max) continue;
       const i = this.hearts.findIndex((h) => Math.abs(h.x - p.body.x) < 36 && Math.abs(h.y - p.body.y) < 36);
       if (i < 0) continue;
@@ -677,9 +823,13 @@ export class World {
     this.results = [];
     this.mobs = [];
     this.hearts = [];
+    this.drops = [];
     this.khan = 0;
+    this.samTimer = this.samDelay();
     for (const p of this.players.values()) {
-      p.score = p.kills = p.deaths = p.bogs = 0;
+      p.score = p.kills = p.deaths = p.bogs = p.coins = 0;
+      p.up = noUpgrades();
+      p.purseDirty = true;
       this.spawn(p);
     }
     this.rosterDirty = true;
@@ -726,6 +876,8 @@ export class World {
         }
         continue;
       }
+      // Bots shop whenever they're standing at the wizard with something worth buying.
+      for (let wish = botWish(p); wish && this.buy(p, wish); wish = botWish(p));
       const intent = bot.think(this, p, this.tactics[p.cls]);
       p.botAcc += dt;
       let first = true;

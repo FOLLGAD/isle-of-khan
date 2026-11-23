@@ -46,7 +46,7 @@ export const CLASSES: Record<ClassId, ClassDef> = {
 };
 
 /** Projectile stats, shared by the server, the client's predicted shots and the bots' aim. */
-export const ARROW = { speed: 1.25, ttl: 600, dmg: 16, knock: 0.5 };
+export const ARROW = { speed: 1.25, ttl: 600, dmg: 17, knock: 0.5 };
 export const ORB = { speed: 0.9, ttl: 950, dmg: 28, knock: 0.7, splash: 90, splashDmg: 16 };
 
 export const isClassId = (v: unknown): v is ClassId => typeof v === 'string' && v in CLASSES;

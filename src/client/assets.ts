@@ -1,6 +1,6 @@
 const SPRITES = [
   'tile-map', 'tree', 'enemy', 'wizard', 'heart', 'bomb', 'particle', 'arrow', 'bolt', 'crown', 'staff',
-  'short-sword', 'bow-simple', 'archer', 'warrior', 'mage',
+  'short-sword', 'bow-simple', 'archer', 'warrior', 'mage', 'coin', 'sam',
 ] as const;
 export type SpriteName = (typeof SPRITES)[number];
 

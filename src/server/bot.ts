@@ -1,6 +1,7 @@
 import { ARROW, CLASSES, ORB, type ClassId } from '../shared/classes';
 import { Key, PLAYER_HH, PLAYER_HW, TILE } from '../shared/constants';
 import { boxBlocked, shotBlocked, walkBlocked, type GameMap } from '../shared/map';
+import { maxHp, priceOf, type ItemId } from '../shared/shop';
 import type { Player, World } from './world';
 
 export const BOT_NAMES = [
@@ -44,8 +45,29 @@ export const TACTICS: Record<ClassId, Tactics> = {
   mage: { min: 225, max: 535, fire: 595, strafe: 1290, bomb: 0.55, bombMin: 175, bombMax: 460, escape: 190, spinNear: 0, heal: 0.59, lead: 1, evade: 0, weave: 0, bogBias: 120 },
 };
 
+/** The order each class buys upgrades in; repeats mean the next level. */
+const SHOPPING: Record<ClassId, ItemId[]> = {
+  warrior: ['armor', 'weapon', 'armor', 'weapon', 'powder', 'armor', 'weapon', 'powder'],
+  archer: ['weapon', 'armor', 'weapon', 'powder', 'armor', 'weapon', 'powder', 'armor'],
+  mage: ['weapon', 'armor', 'powder', 'weapon', 'armor', 'powder', 'weapon', 'armor'],
+};
+
+/** What a bot would buy right now, if it can afford it. */
+export function botWish(me: Player): ItemId | null {
+  if (me.hp < maxHp(me.cls, me.up) * 0.4 && me.coins >= (priceOf('potion', me.up) ?? Infinity)) return 'potion';
+  const seen: Record<string, number> = {};
+  for (const id of SHOPPING[me.cls]) {
+    seen[id] = (seen[id] ?? 0) + 1;
+    if (id !== 'potion' && me.up[id] < seen[id]) {
+      const price = priceOf(id, me.up);
+      return price !== null && me.coins >= price ? id : null;
+    }
+  }
+  return null;
+}
+
 interface Target {
-  kind: 'player' | 'mob' | 'heart' | 'spot';
+  kind: 'player' | 'mob' | 'heart' | 'spot' | 'coin' | 'shop';
   id: number;
   x: number;
   y: number;
@@ -74,7 +96,7 @@ function lineClear(x0: number, y0: number, x1: number, y1: number, blocked: (x: 
 }
 
 /** A path of tile centers from (x0,y0) to (x1,y1), by breadth-first search over walkable tiles. */
-function findPath(m: GameMap, x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] | null {
+export function findPath(m: GameMap, x0: number, y0: number, x1: number, y1: number): { x: number; y: number }[] | null {
   const sx = Math.floor(x0 / TILE), sy = Math.floor(y0 / TILE), tx = Math.floor(x1 / TILE), ty = Math.floor(y1 / TILE);
   if (walkBlocked(m, tx, ty)) return null;
   const prev = new Int32Array(m.w * m.h).fill(-1);
@@ -143,7 +165,7 @@ export class BotBrain {
   think(v: World, me: Player, tactics: Tactics): { keys: number; aim: number; dist: number } {
     const now = v.now, b = me.body, cls = me.cls, rand = this.rand;
     this.trackPositions(v);
-    if (now >= this.retargetAt || !this.targetValid(v)) this.pickTarget(v, me, tactics);
+    if (now >= this.retargetAt || !this.targetValid(v, me)) this.pickTarget(v, me, tactics);
     this.trackRange(now, Math.hypot(this.target!.x - b.x, this.target!.y - b.y) < tactics.fire);
     const t = this.target!;
     let keys = 0;
@@ -281,7 +303,7 @@ export class BotBrain {
     if (this.seen.size > 80) for (const [k, h] of this.seen) if (h[h.length - 1].t < v.now - 2000) this.seen.delete(k);
   }
 
-  private targetValid(v: World) {
+  private targetValid(v: World, me: Player) {
     const t = this.target;
     if (!t) return false;
     if (t.kind === 'player') {
@@ -293,6 +315,8 @@ export class BotBrain {
       return !!m && (this.locate(t, -m.id), true);
     }
     if (t.kind === 'heart') return v.hearts.some((h) => h.x === t.x && h.y === t.y);
+    if (t.kind === 'coin') return v.drops.some((c) => c.id === t.id);
+    if (t.kind === 'shop') return botWish(me) !== null;
     return Math.hypot(t.x - this.lastPos.x, t.y - this.lastPos.y) > 120;
   }
 
@@ -326,6 +350,16 @@ export class BotBrain {
       const d = Math.hypot(m.x - b.x, m.y - b.y);
       if (d < 800) consider({ kind: 'mob', id: m.id, x: m.x, y: m.y }, d + tactics.bogBias - (old?.kind === 'mob' && old.id === m.id ? 150 : 0));
     }
+    for (const c of v.drops) {
+      const d = Math.hypot(c.x - b.x, c.y - b.y);
+      if (d < 600) consider({ kind: 'coin', id: c.id, x: c.x, y: c.y }, d + 100 - c.value * 30);
+    }
+    // With coins to spend and nobody close, go see the wizard.
+    if (botWish(me)) {
+      let threat = Infinity;
+      for (const p of v.players.values()) if (p.alive && p.id !== this.id) threat = Math.min(threat, Math.hypot(p.body.x - b.x, p.body.y - b.y));
+      if (threat > 450) consider({ kind: 'shop', id: 0, x: v.map.wizard.x, y: v.map.wizard.y + 80 }, -1000);
+    }
     if (!best) {
       // Nothing nearby: head for the nearest fight, or wander the isle.
       let nearest: Target | null = null, nd = Infinity;
@@ -334,7 +368,7 @@ export class BotBrain {
         const d = Math.hypot(p.body.x - b.x, p.body.y - b.y);
         if (d < nd) (nd = d), (nearest = { kind: 'spot', id: 0, x: p.body.x, y: p.body.y });
       }
-      if (old?.kind === 'spot' && this.targetValid(v)) best = old;
+      if (old?.kind === 'spot' && this.targetValid(v, me)) best = old;
       else if (nearest && rand() < 0.7) best = nearest;
       else {
         for (let i = 0; i < 50 && !best; i++) {

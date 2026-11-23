@@ -39,6 +39,7 @@ async function main() {
 
   const hud = new Hud({
     respawn: (c) => game?.respawn(c),
+    buy: (item) => game?.buy(item),
     chat: (m) => game?.chat(m),
     leave: () => leave(),
     reconnect: () => {
@@ -90,7 +91,7 @@ async function main() {
     if (game) return;
     requestAnimationFrame(backdrop);
     const focus = { x: 2900 + Math.cos(t / 21000) * 1100, y: 2900 + Math.sin(t / 15000) * 900 };
-    renderer.draw({ focus, time: t, players: [], mobs: [], projs: [], bombs: [], hearts: [], me: null, wizardLine: null }, null);
+    renderer.draw({ focus, time: t, players: [], mobs: [], projs: [], bombs: [], hearts: [], coins: [], me: null, wizardLine: null }, null);
   };
   requestAnimationFrame(backdrop);
 

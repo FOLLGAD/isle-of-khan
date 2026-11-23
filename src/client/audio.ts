@@ -1,6 +1,6 @@
 const SAMPLES = { bow: 'bow-fire.mp3', sword: 'sword-sound.mp3', boom: 'grenade-sound.mp3', swoosh: 'arrow-swosh.mp3' } as const;
 type Sample = keyof typeof SAMPLES;
-export type Sfx = Sample | 'hit' | 'hurt' | 'pickup' | 'death' | 'squish' | 'blink' | 'crown' | 'throw' | 'orb' | 'burst' | 'click' | 'spawn' | 'thud';
+export type Sfx = Sample | 'hit' | 'hurt' | 'pickup' | 'death' | 'squish' | 'blink' | 'crown' | 'throw' | 'orb' | 'burst' | 'click' | 'spawn' | 'thud' | 'coin' | 'buy' | 'steal';
 
 const MUTE_KEY = 'iok.muted';
 
@@ -89,6 +89,9 @@ class SoundBoard {
       case 'click': tone('square', 880, 880, 0.04, 0.08); break;
       case 'spawn': [262, 392, 523].forEach((f, i) => tone('triangle', f, f, 0.1, 0.1, i * 0.05)); break;
       case 'thud': noise(0.05, 0.25, 1200); break;
+      case 'coin': tone('square', 988, 988, 0.05, 0.1); tone('square', 1319, 1319, 0.12, 0.1, 0.05); break;
+      case 'buy': [659, 784, 988, 1319].forEach((f, i) => tone('triangle', f, f, 0.1, 0.12, i * 0.05)); noise(0.08, 0.1, 6000); break;
+      case 'steal': tone('square', 900, 300, 0.25, 0.15); tone('square', 600, 200, 0.2, 0.1, 0.1); break;
     }
   }
 }

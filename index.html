@@ -45,6 +45,7 @@
       </div>
       <div id="hotbar">
         <div id="hp"><div id="hp-fill"></div><span id="hp-text"></span></div>
+        <div id="purse"><img src="/assets/sprites/coin.png" alt="Coins" class="px-icon" /> <span id="coins">0</span></div>
         <div class="slots">
           <div class="slot" id="slot-primary"><img id="slot-primary-img" alt="" /><div class="cd"></div><span class="cd-text"></span><span class="key">LMB</span></div>
           <div class="slot" id="slot-secondary" title="Bomb"><img src="/assets/sprites/bomb.png" alt="" /><div class="cd"></div><span class="cd-text"></span><span class="key">RMB</span></div>
@@ -53,6 +54,12 @@
       </div>
       <div class="corner-buttons"><button id="chat-button" class="icon-btn" title="Chat">💬</button><button id="menu-button" class="icon-btn" title="Menu (Esc)">☰</button></div>
       <div id="hurt-vignette"></div>
+
+      <div id="shop" hidden>
+        <h3>The Wizard's Wares</h3>
+        <div id="shop-items"></div>
+        <p class="note">Upgrades last until the round ends.</p>
+      </div>
 
       <div id="scoreboard" class="panel" hidden>
         <h1>Scoreboard</h1>

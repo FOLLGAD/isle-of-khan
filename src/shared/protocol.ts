@@ -1,7 +1,8 @@
 import type { ClassId } from './classes';
+import type { ItemId, Upgrades } from './shop';
 
-/** Player snapshot: [id, x, y, aim, hp, flags] */
-export type PlayerSnap = [number, number, number, number, number, number];
+/** Player snapshot: [id, x, y, aim, hp, flags, maxHp] */
+export type PlayerSnap = [number, number, number, number, number, number, number];
 export const enum PF {
   Alive = 1,
   Shield = 2,
@@ -17,6 +18,8 @@ export const enum MF {
   Hurt = 2,
   Moving = 4,
   FaceLeft = 8,
+  /** Samuel, the coin thief. */
+  Sam = 16,
 }
 export const enum ProjKind {
   Arrow = 0,
@@ -28,6 +31,8 @@ export type ProjSnap = [number, ProjKind, number, number, number, number, number
 export type BombSnap = [number, number, number, number];
 /** Heart snapshot: [id, x, y] */
 export type HeartSnap = [number, number, number];
+/** Coins on the ground: [id, x, y, value] */
+export type CoinSnap = [number, number, number, number];
 
 export const enum Ev {
   /** x, y, amount, isMob, targetId */
@@ -56,13 +61,19 @@ export const enum Ev {
   Spawn = 11,
   /** x, y — a projectile struck something solid */
   Thud = 12,
+  /** x, y, playerId, value — someone picked up coins */
+  Coin = 13,
+  /** playerId, item index — someone bought from the wizard */
+  Buy = 14,
+  /** x, y, playerId, amount — Samuel stole coins */
+  Steal = 15,
 }
 export type EventSnap = [Ev, ...number[]];
 
 /** [id, name, class, score, kills, deaths, bogs, ping, isBot] */
 export type RosterEntry = [number, string, ClassId, number, number, number, number, number, 0 | 1];
 
-export type KillHow = 'arrow' | 'sword' | 'orb' | 'bomb' | 'spin' | 'bog';
+export type KillHow = 'arrow' | 'sword' | 'orb' | 'bomb' | 'spin' | 'bog' | 'sam';
 
 export interface RoundResult {
   name: string;
@@ -89,6 +100,7 @@ export type ServerMsg =
       pr: ProjSnap[];
       b: BombSnap[];
       h: HeartSnap[];
+      c: CoinSnap[];
       e: EventSnap[];
     }
   | { t: 'roster'; r: RosterEntry[]; khan: number }
@@ -97,7 +109,11 @@ export type ServerMsg =
   | { t: 'dead'; by: string | null; respawnIn: number }
   | { t: 'khan'; id: number; name: string }
   | { t: 'round'; phase: 'play' | 'end'; endsIn: number; results: RoundResult[] }
-  | { t: 'pong'; c: number };
+  | { t: 'pong'; c: number }
+  /** The receiving player's coins and upgrades, sent when they change. */
+  | { t: 'purse'; coins: number; up: Upgrades }
+  /** Shown in big letters to everyone. */
+  | { t: 'announce'; m: string };
 
 /** Input: [seq, keys, aim, dist] */
 export type InputSnap = [number, number, number, number];
@@ -106,4 +122,5 @@ export type ClientMsg =
   | { t: 'in'; i: InputSnap[] }
   | { t: 'chat'; m: string }
   | { t: 'respawn'; cls: ClassId }
-  | { t: 'ping'; c: number; rtt: number };
+  | { t: 'ping'; c: number; rtt: number }
+  | { t: 'buy'; item: ItemId };

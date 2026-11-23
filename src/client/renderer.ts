@@ -1,6 +1,7 @@
 import type { ClassId } from '../shared/classes';
 import { TILE } from '../shared/constants';
 import { isShallow, MAP, WATER } from '../shared/map';
+import type { MobKind } from '../shared/shop';
 import { flash, img, redFlash } from './assets';
 import type { Effects } from './fx';
 
@@ -30,7 +31,7 @@ export interface DrawMob {
   id: number;
   x: number;
   y: number;
-  big: boolean;
+  kind: MobKind;
   hp: number;
   maxHp: number;
   hurt: boolean;
@@ -47,6 +48,7 @@ export interface Scene {
   projs: { kind: number; x: number; y: number; vx: number; vy: number }[];
   bombs: { x: number; y: number; fuse: number }[];
   hearts: { id: number; x: number; y: number }[];
+  coins: { id: number; x: number; y: number; value: number }[];
   /** Local player's feet, for fading trees in front of you and the wizard's chatter. */
   me: { x: number; y: number } | null;
   wizardLine: string | null;
@@ -186,7 +188,11 @@ export class Renderer {
     // Ground layer: shadows, hearts, bombs, shockwaves.
     ctx.globalAlpha = 0.22;
     for (const p of scene.players) if (inView(p.x, p.y)) ctx.drawImage(this.layers.shadow, p.x - 28, p.y + 4, 56, 24);
-    for (const m of scene.mobs) if (inView(m.x, m.y)) ctx.drawImage(this.layers.shadow, m.x - (m.big ? 42 : 28), m.y + 2, m.big ? 84 : 56, m.big ? 30 : 24);
+    for (const m of scene.mobs) {
+      if (!inView(m.x, m.y)) continue;
+      const w = m.kind === 'big' ? 84 : m.kind === 'sam' ? 40 : 56;
+      ctx.drawImage(this.layers.shadow, m.x - w / 2, m.y + 2, w, m.kind === 'big' ? 30 : 20);
+    }
     ctx.drawImage(this.layers.shadow, MAP.wizard.x - 28, MAP.wizard.y + 4, 56, 24);
     ctx.globalAlpha = 1;
     for (const h of scene.hearts) {
@@ -196,6 +202,20 @@ export class Renderer {
       ctx.drawImage(this.layers.shadow, h.x - 16, h.y + 8, 32, 12);
       ctx.globalAlpha = 1;
       ctx.drawImage(img.heart, h.x - 18, h.y - 28 + bob, 36, 36);
+    }
+    for (const c of scene.coins) {
+      if (!inView(c.x, c.y)) continue;
+      // A single coin is small; a dropped purse is a big one.
+      const s = c.value > 1 ? 32 : 20;
+      const bob = Math.round(Math.sin(t / 300 + c.id) * 1.5) * 4;
+      ctx.globalAlpha = 0.2;
+      ctx.drawImage(this.layers.shadow, c.x - s / 2, c.y + 6, s, 10);
+      ctx.globalAlpha = 1;
+      ctx.drawImage(img.coin, c.x - s / 2, c.y - s - 4 + bob, s, s);
+      if (Math.floor(t / 120 + c.id) % 12 === 0) {
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(c.x - s / 2 + 4, c.y - s + bob, 4, 4);
+      }
     }
     for (const b of scene.bombs) {
       if (!inView(b.x, b.y)) continue;
@@ -243,8 +263,18 @@ export class Renderer {
     // Labels last so trees never hide who is who.
     for (const p of scene.players) if (inView(p.x, p.y)) this.drawLabel(p);
     for (const m of scene.mobs) {
-      if (!inView(m.x, m.y) || m.hp >= m.maxHp) continue;
-      const top = m.y - (m.big ? 200 : 136), w = m.big ? 70 : 50;
+      if (!inView(m.x, m.y)) continue;
+      if (m.kind === 'sam') {
+        ctx.font = '13px GameFont';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = '#000';
+        ctx.strokeText('Samuel', m.x, m.y - 86);
+        ctx.fillStyle = '#e0a0ff';
+        ctx.fillText('Samuel', m.x, m.y - 86);
+      }
+      if (m.hp >= m.maxHp) continue;
+      const top = m.y - (m.kind === 'big' ? 200 : m.kind === 'sam' ? 80 : 136), w = m.kind === 'big' ? 70 : 50;
       ctx.fillStyle = '#000';
       ctx.fillRect(m.x - w / 2, top, w, 8);
       ctx.fillStyle = '#c33';
@@ -352,7 +382,8 @@ export class Renderer {
 
   private drawMob(m: DrawMob, t: number) {
     const { ctx } = this;
-    const w = m.big ? 96 : 64, h = m.big ? 192 : 128;
+    if (m.kind === 'sam') return this.drawSam(m, t);
+    const w = m.kind === 'big' ? 96 : 64, h = m.kind === 'big' ? 192 : 128;
     // A little wobble so bogs look alive.
     const squash = m.moving ? Math.round(Math.sin(t / 90 + m.id) * 2) * 4 : Math.round(Math.sin(t / 400 + m.id)) * 4;
     ctx.save();
@@ -360,7 +391,19 @@ export class Renderer {
     if (m.faceLeft) ctx.scale(-1, 1);
     ctx.drawImage(m.hurt ? flash.enemy : img.enemy, -w / 2 - squash / 2, -h + squash, w + squash, h - squash);
     ctx.restore();
-    if (isShallow(MAP, m.x, m.y)) this.wade(m.x, m.y, m.big ? 80 : 56, t);
+    if (isShallow(MAP, m.x, m.y)) this.wade(m.x, m.y, m.kind === 'big' ? 80 : 56, t);
+  }
+
+  /** Samuel: the little 8x8 man from the original art, scuttling about. */
+  private drawSam(m: DrawMob, t: number) {
+    const { ctx } = this;
+    const hop = m.moving ? (Math.floor(t / 70) % 2) * 4 : 0;
+    ctx.save();
+    ctx.translate(m.x, m.y + 10 - hop);
+    if (m.faceLeft) ctx.scale(-1, 1);
+    ctx.drawImage(m.hurt ? flash.sam : img.sam, -32, -64, 64, 64);
+    ctx.restore();
+    if (isShallow(MAP, m.x, m.y)) this.wade(m.x, m.y, 44, t);
   }
 
   private drawProjectile(q: { kind: number; x: number; y: number; vx: number; vy: number }, t: number) {

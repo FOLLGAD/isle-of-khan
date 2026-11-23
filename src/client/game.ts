@@ -2,9 +2,10 @@ import { ARROW, CLASSES, ORB, type ClassId } from '../shared/classes';
 import { HURT, INTERP_DELAY, SIM_DT } from '../shared/constants';
 import { MAP, shotBlocked } from '../shared/map';
 import {
-  Ev, MF, PF, ProjKind, type BombSnap, type EventSnap, type HeartSnap, type MobSnap, type PlayerSnap, type ProjSnap,
-  type RosterEntry, type ServerMsg,
+  Ev, MF, PF, ProjKind, type BombSnap, type CoinSnap, type EventSnap, type HeartSnap, type MobSnap, type PlayerSnap,
+  type ProjSnap, type RosterEntry, type ServerMsg,
 } from '../shared/protocol';
+import { ITEMS, MOB_HP, noUpgrades, SHOP_RANGE, type ItemId, type MobKind } from '../shared/shop';
 import { Act, newBody, stepPlayer, unpackBody, type Input } from '../shared/sim';
 import { img } from './assets';
 import { audio, type Sfx } from './audio';
@@ -23,6 +24,9 @@ const WIZARD_LINES = [
   'Hearts mend wounds. Bogs sometimes drop them when they pop.',
   'Mind your own bombs. The isle has no mercy for the careless.',
   'Hold TAB to see who rules the isle.',
+  'Bring me coins and I will make you stronger. Stand close and press 1 to 4.',
+  'Beware Samuel. He steals coins, then runs. Catch him and the coins are yours.',
+  'Fall in battle and half your purse spills on the ground.',
 ];
 const LOCAL_PROJ = { [ProjKind.Arrow]: ARROW, [ProjKind.Orb]: ORB };
 
@@ -33,6 +37,7 @@ interface Snap {
   projs: Map<number, ProjSnap>;
   bombs: Map<number, BombSnap>;
   hearts: HeartSnap[];
+  coins: CoinSnap[];
 }
 
 interface LocalProj {
@@ -94,7 +99,10 @@ export class Game {
   roster = new Map<number, RosterInfo>();
   khan = 0;
   myHp = 0;
+  myMaxHp = 0;
   myFlags = 0;
+  coins = 0;
+  up = noUpgrades();
   /** Last known position of the local player, used as the camera focus while dead. */
   lastPos = { x: MAP.wizard.x, y: MAP.wizard.y };
   private lastFrame = performance.now();
@@ -135,6 +143,15 @@ export class Game {
     this.conn.send({ t: 'chat', m });
   }
 
+  buy(item: ItemId) {
+    this.conn.send({ t: 'buy', item });
+  }
+
+  /** Close enough to the wizard to trade. */
+  get atShop() {
+    return this.alive && Math.hypot(this.body.x - MAP.wizard.x, this.body.y - MAP.wizard.y) <= SHOP_RANGE;
+  }
+
   /** Server clock estimate. */
   private serverNow(now: number) {
     return now + (this.timeOffset ?? 0);
@@ -162,6 +179,14 @@ export class Game {
       case 'khan':
         this.hud.big(`<img src="/assets/sprites/crown.png" class="px-icon"> <b class="gold">${escapeHtml(msg.name)}</b> is the Khan!`);
         audio.play('crown', msg.id === this.myId ? 0.9 : 0.5);
+        return;
+      case 'purse':
+        this.coins = msg.coins;
+        this.up = msg.up;
+        return;
+      case 'announce':
+        this.hud.big(escapeHtml(msg.m));
+        audio.play('steal', 0.5);
         return;
       case 'round':
         this.hud.round(msg.phase, performance.now() + msg.endsIn, msg.results, this.myId);
@@ -192,6 +217,7 @@ export class Game {
       projs: new Map(s.pr.map((p) => [p[0], p])),
       bombs: new Map(s.b.map((b) => [b[0], b])),
       hearts: s.h,
+      coins: s.c,
     };
     this.snaps.push(snap);
     while (this.snaps.length > 2 && this.snaps[1].st < s.st - 1000) this.snaps.shift();
@@ -201,6 +227,7 @@ export class Game {
     if (mine) {
       this.myHp = mine[4];
       this.myFlags = mine[5];
+      this.myMaxHp = mine[6];
       if (!(mine[5] & PF.Alive)) this.lastPos = { x: mine[1], y: mine[2] };
     }
 
@@ -350,7 +377,7 @@ export class Game {
   }
 
   private buildScene(rt: number, now: number, dt: number): Scene {
-    const scene: Scene = { focus: this.lastPos, time: now, players: [], mobs: [], projs: [], bombs: [], hearts: [], me: null, wizardLine: null };
+    const scene: Scene = { focus: this.lastPos, time: now, players: [], mobs: [], projs: [], bombs: [], hearts: [], coins: [], me: null, wizardLine: null };
     const br = this.bracket(rt);
     const latest = this.snaps[this.snaps.length - 1];
     const progress = (at: number, ms: number) => (now - at < ms ? (now - at) / ms : null);
@@ -368,7 +395,7 @@ export class Game {
         const cls = info?.cls ?? 'archer';
         const p: DrawPlayer = {
           id, x: lerp(fa[1], pb[1], f), y: lerp(fa[2], pb[2], f), aim: lerpAngle(fa[3], pb[3], f), cls, name: info?.name ?? '?',
-          hp: pb[4], maxHp: CLASSES[cls].hp, isMe: false, isKhan: !!(pb[5] & PF.Khan), hurt: !!(pb[5] & PF.Hurt),
+          hp: pb[4], maxHp: pb[6], isMe: false, isKhan: !!(pb[5] & PF.Khan), hurt: !!(pb[5] & PF.Hurt),
           shield: !!(pb[5] & PF.Shield), walkT: anim.walkT, swing: progress(anim.swingAt, 220), swingAim: anim.swingAim,
           spin: progress(anim.spinAt, 350), cast: progress(anim.castAt, 250),
         };
@@ -377,9 +404,9 @@ export class Game {
       }
       for (const mb of b.mobs.values()) {
         const ma = a.mobs.get(mb[0]) ?? mb;
-        const big = !!(mb[4] & MF.Big);
+        const kind: MobKind = mb[4] & MF.Big ? 'big' : mb[4] & MF.Sam ? 'sam' : 'bog';
         const m: DrawMob = {
-          id: mb[0], x: lerp(ma[1], mb[1], f), y: lerp(ma[2], mb[2], f), big, hp: mb[3], maxHp: big ? 120 : 45,
+          id: mb[0], x: lerp(ma[1], mb[1], f), y: lerp(ma[2], mb[2], f), kind, hp: mb[3], maxHp: MOB_HP[kind],
           hurt: !!(mb[4] & MF.Hurt), moving: !!(mb[4] & MF.Moving), faceLeft: !!(mb[4] & MF.FaceLeft),
         };
         scene.mobs.push(m);
@@ -394,6 +421,7 @@ export class Game {
         scene.bombs.push({ x: lerp(ba[1], bb[1], f), y: lerp(ba[2], bb[2], f), fuse: bb[3] });
       }
       scene.hearts = latest.hearts.map(([id, x, y]) => ({ id, x, y }));
+      scene.coins = latest.coins.map(([id, x, y, value]) => ({ id, x, y, value }));
     }
     for (const lp of this.localProjs) scene.projs.push(lp);
 
@@ -404,7 +432,7 @@ export class Game {
       anim.walkT = this.body.moving ? anim.walkT + dt : 0;
       const me: DrawPlayer = {
         id: this.myId, x, y, aim: this.lastAim, cls: this.cls, name: this.roster.get(this.myId)?.name ?? '', hp: this.myHp,
-        maxHp: CLASSES[this.cls].hp, isMe: true, isKhan: this.khan === this.myId, hurt: !!(this.myFlags & PF.Hurt),
+        maxHp: this.myMaxHp || CLASSES[this.cls].hp, isMe: true, isKhan: this.khan === this.myId, hurt: !!(this.myFlags & PF.Hurt),
         shield: !!(this.myFlags & PF.Shield), walkT: anim.walkT, swing: progress(anim.swingAt, 220), swingAim: anim.swingAim,
         spin: progress(anim.spinAt, 350), cast: progress(anim.castAt, 250),
       };
@@ -452,7 +480,7 @@ export class Game {
           if (rx >= HURT.left && rx <= HURT.right && ry >= HURT.top && ry <= HURT.bottom) return false;
         }
         for (const m of scene.mobs) {
-          const rx = q.x - m.x, ry = q.y - m.y, w = m.big ? 40 : 26, h = m.big ? 170 : 112;
+          const rx = q.x - m.x, ry = q.y - m.y, w = m.kind === 'big' ? 40 : m.kind === 'sam' ? 22 : 26, h = m.kind === 'big' ? 170 : m.kind === 'sam' ? 62 : 112;
           if (Math.abs(rx) <= w && ry >= -h && ry <= 12) return false;
         }
       }
@@ -482,10 +510,11 @@ export class Game {
         return;
       }
       case Ev.Boom: {
-        const [, x, y] = e;
-        fx.puffs(x, y, 10, 200, 80);
-        fx.burst(x, y, ['#ffb52e', '#ff6a00', '#ffe066', '#555'], 26, 420, { z: 10, lift: 420 });
-        fx.ring(x, y, 20, 170, '#ffd27a');
+        const [, x, y, mul = 100] = e;
+        const size = mul / 100;
+        fx.puffs(x, y, Math.round(10 * size), 200 * size, 80);
+        fx.burst(x, y, ['#ffb52e', '#ff6a00', '#ffe066', '#555'], Math.round(26 * size), 420 * size, { z: 10, lift: 420 });
+        fx.ring(x, y, 20, 170 * size, '#ffd27a');
         fx.shake = Math.max(fx.shake, 22 * Math.max(0, 1 - Math.hypot(x - me.x, y - me.y) / 900));
         sfx('boom', x, y, 0.9);
         return;
@@ -561,6 +590,31 @@ export class Game {
         const [, x, y] = e;
         fx.sparkle(x, y, ['#fff', '#fff7b0', '#9fe8ff'], 18);
         sfx('spawn', x, y, 0.4);
+        return;
+      }
+      case Ev.Coin: {
+        const [, x, y, id, value] = e;
+        fx.sparkle(x, y, ['#fff651', '#ffd903', '#fff'], 6 + value);
+        fx.text(x, y - 50, `+${value}`, '#ffd903');
+        if (id === this.myId) audio.play('coin', 0.7);
+        else sfx('coin', x, y, 0.25);
+        return;
+      }
+      case Ev.Buy: {
+        const [, id, item] = e;
+        const p = posOf(id);
+        if (p) {
+          fx.sparkle(p.x, p.y, ['#c08cff', '#fff651', '#fff'], 18);
+          fx.text(p.x, p.y - 150, ITEMS[item]?.name ?? '', '#e0a0ff');
+        }
+        if (id === this.myId) audio.play('buy', 0.8);
+        return;
+      }
+      case Ev.Steal: {
+        const [, x, y, id, n] = e;
+        fx.text(x, y - 150, `-${n} coins`, '#ffd903', true);
+        fx.burst(x, y - 40, ['#fff651', '#ffd903'], 8, 250, { z: 60 });
+        sfx('steal', x, y, id === this.myId ? 1 : 0.5);
         return;
       }
       case Ev.Thud: {

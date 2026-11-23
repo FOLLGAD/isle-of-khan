@@ -2,6 +2,7 @@ import { BOMB_CD, CLASS_IDS, CLASSES, type ClassId } from '../shared/classes';
 import { TILE } from '../shared/constants';
 import { MAP } from '../shared/map';
 import type { KillHow, RoundResult } from '../shared/protocol';
+import { ITEMS, priceOf, type ItemId } from '../shared/shop';
 import { escapeHtml, type Game, type RosterInfo } from './game';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -12,7 +13,8 @@ const tileColor = (gid: number) => TILE_COLORS[gid - 1] ?? ([3, 4, 5, 11, 12, 13
 
 export const PRIMARY_ICON: Record<ClassId, string> = { archer: 'arrow', warrior: 'short-sword', mage: 'bolt' };
 export const SPECIAL_ICON: Record<string, string> = { dash: 'icon-dash', spin: 'icon-spin', blink: 'icon-blink' };
-const HOW: Record<KillHow, string> = { arrow: 'shot', sword: 'cut down', orb: 'blasted', bomb: 'blew up', spin: 'whirled down', bog: 'ate' };
+const HOW: Record<KillHow, string> = { arrow: 'shot', sword: 'cut down', orb: 'blasted', bomb: 'blew up', spin: 'whirled down', bog: 'ate', sam: 'mugged' };
+const ITEM_ICON: Record<ItemId, string> = { weapon: '', armor: 'icon-armor', powder: 'bomb', potion: 'icon-potion' };
 
 /** Class picker cards; used on the title screen and the death screen. */
 export function classCards(root: HTMLElement, selected: ClassId, onPick: (c: ClassId) => void, compact = false) {
@@ -45,6 +47,7 @@ export function classCards(root: HTMLElement, selected: ClassId, onPick: (c: Cla
 
 export interface HudActions {
   respawn(cls: ClassId): void;
+  buy(item: ItemId): void;
   chat(m: string): void;
   leave(): void;
   reconnect(): void;
@@ -70,6 +73,8 @@ export class Hud {
   private fps = 0;
   private lastFrame = 0;
   private slotCls: ClassId | null = null;
+  private shopKey = '';
+  private atShop = false;
   inviteUrl = '';
 
   constructor(private actions: HudActions) {
@@ -116,6 +121,8 @@ export class Hud {
       } else if (e.code === 'Backquote') {
         this.debug = !this.debug;
         $('debug').hidden = !this.debug;
+      } else if (this.atShop && /^Digit[1-4]$/.test(e.code)) {
+        this.actions.buy(ITEMS[Number(e.code.slice(5)) - 1].id);
       } else if (e.code === 'Space' && !$('death').hidden) {
         if (performance.now() >= this.respawnAt) this.actions.respawn(this.deathCls);
       }
@@ -131,6 +138,10 @@ export class Hud {
     $('invite').addEventListener('click', () => this.copyInvite());
     $('menu-button').addEventListener('click', () => this.togglePause());
     $('chat-button').addEventListener('click', () => input.focus());
+    $('shop').addEventListener('click', (e) => {
+      const id = (e.target as HTMLElement).closest<HTMLElement>('[data-item]')?.dataset.item;
+      if (id) this.actions.buy(id as ItemId);
+    });
     this.updateMuteLabel(this.actions.isMuted());
   }
 
@@ -319,10 +330,12 @@ export class Hud {
     this.cooldown('slot-primary', b.cdP, def.primary.cd);
     this.cooldown('slot-secondary', b.cdS, BOMB_CD);
     this.cooldown('slot-special', b.cdX, def.special.cd);
-    const hp = game.alive ? game.myHp : 0;
-    $('hp-fill').style.width = `${(100 * hp) / def.hp}%`;
-    $('hp-fill').className = hp / def.hp > 0.5 ? '' : hp / def.hp > 0.25 ? 'mid' : 'low';
-    $('hp-text').textContent = `${hp} / ${def.hp}`;
+    const hp = game.alive ? game.myHp : 0, max = game.myMaxHp || def.hp;
+    $('hp-fill').style.width = `${(100 * hp) / max}%`;
+    $('hp-fill').className = hp / max > 0.5 ? '' : hp / max > 0.25 ? 'mid' : 'low';
+    $('hp-text').textContent = `${hp} / ${max}`;
+    $('coins').textContent = String(game.coins);
+    this.renderShop(game);
 
     if (now - this.lastMinimap > 100) {
       this.lastMinimap = now;
@@ -331,6 +344,30 @@ export class Hud {
     if (this.debug) {
       $('debug').textContent = `fps ${this.fps.toFixed(0)}  ping ${game.rtt.toFixed(0)}ms  room ${game.room}  pos ${b.x.toFixed(0)},${b.y.toFixed(0)}`;
     }
+  }
+
+  /** The wizard's shop, shown while you stand next to him. */
+  private renderShop(game: Game) {
+    this.atShop = game.atShop;
+    const panel = $('shop');
+    panel.hidden = !this.atShop;
+    if (!this.atShop) return;
+    const key = JSON.stringify([game.coins, game.up, game.cls, game.myHp >= game.myMaxHp]);
+    if (key === this.shopKey) return;
+    this.shopKey = key;
+    $('shop-items').innerHTML = ITEMS.map((item, i) => {
+      const price = priceOf(item.id, game.up);
+      const level = item.id === 'potion' ? null : game.up[item.id];
+      const full = item.id === 'potion' && game.myHp >= game.myMaxHp;
+      const can = price !== null && game.coins >= price && !full;
+      const icon = item.id === 'weapon' ? PRIMARY_ICON[game.cls] : ITEM_ICON[item.id];
+      const pips = level === null ? '' : `<span class="pips">${item.costs.map((_, l) => `<i class="${l < level ? 'on' : ''}"></i>`).join('')}</span>`;
+      return `<button class="shop-item${can ? '' : ' cant'}" data-item="${item.id}">
+        <span class="shop-key">${i + 1}</span><img src="/assets/sprites/${icon}.png" alt="">
+        <span class="shop-text"><b>${item.name}</b>${pips}<small>${item.desc}</small></span>
+        <span class="shop-price">${price === null ? 'MAX' : `<img src="/assets/sprites/coin.png" class="px-icon"> ${price}`}</span>
+      </button>`;
+    }).join('');
   }
 
   private cooldown(id: string, left: number, total: number) {

@@ -24,6 +24,10 @@ On phones and tablets: the left stick moves, the right stick aims and fires, and
 - Whoever has the most glory is **the Khan** and wears the crown. Killing the Khan is worth 2 extra glory.
 - Rounds last 5 minutes. The leader at the end is Khan of the Isle, then everything resets.
 - Hearts heal 25 HP. Bogs sometimes drop them, and so does everyone who dies.
+- **Coins** drop from bogs (big bogs drop more), lie around the isle, and are paid as a bounty for kills (more for the Khan). When you die, half your purse spills on the ground for anyone to grab.
+- **The wizard's shop:** stand next to the wizard in the plaza and press 1-4 (or click) to buy upgrades that last until the round ends: a sharpened weapon (+10% damage per level), thick hide (+20 max HP per level), black powder (bigger, stronger bombs) and a healing draught. Bots shop too.
+- **Samuel** shows up every few minutes: a small, fast thief who goes for the fattest purse, steals coins and runs. Catch him to get the stolen coins back plus a bonus. (He's the unused `Samenemy.pdn` enemy from 2016, finally on the isle.)
+- A **ford** of shallow water joins the southern crescent's east tip to the mainland. You wade slowly through it.
 - **Play with friends** creates a private room. Share the link from the Esc menu.
 - Bots keep every room lively: while anyone is playing, the room is topped up to 6 fighters with bots, and they step aside as people join. They play by the same rules as you (same inputs, cooldowns and hitboxes) and see the world with a human-like delay and reaction time, so they don't have superhuman reflexes. They're tagged BOT on the scoreboard.
 

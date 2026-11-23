@@ -5,6 +5,7 @@ import { MAP, boxBlocked } from '../src/shared/map';
 import type { ServerMsg } from '../src/shared/protocol';
 import { newBody, stepPlayer } from '../src/shared/sim';
 import { World, type Player } from '../src/server/world';
+import { maxHp } from '../src/shared/shop';
 
 function setup() {
   const sent: { to: number | 'all'; msg: ServerMsg }[] = [];
@@ -200,6 +201,103 @@ describe('world', () => {
     run(700);
     world.handle(a.id, { t: 'chat', m: 'later' });
     expect(sent.filter((s) => s.msg.t === 'chat').map((s) => s.msg.t === 'chat' && s.msg.m)).toEqual(['hi there', 'later']);
+  });
+});
+
+describe('coins and the wizard', () => {
+  const atWizard = (world: World, p: Player) => {
+    p.body = newBody(world.map.wizard.x, world.map.wizard.y + 80);
+    p.shieldUntil = 0;
+  };
+
+  it('sells upgrades only up close and only for coin', () => {
+    const { world } = setup();
+    const p = world.join('Buyer', 'warrior');
+    p.coins = 100;
+    expect(world.buy(p, 'weapon')).toBe(false);
+    atWizard(world, p);
+    p.coins = 5;
+    expect(world.buy(p, 'weapon')).toBe(false);
+    p.coins = 100;
+    expect(world.buy(p, 'weapon')).toBe(true);
+    expect(world.buy(p, 'weapon')).toBe(true);
+    expect(world.buy(p, 'weapon')).toBe(true);
+    expect(world.buy(p, 'weapon')).toBe(false);
+    expect(p.coins).toBe(100 - 6 - 10 - 16);
+    expect(p.up.weapon).toBe(3);
+  });
+
+  it('armor raises max and current health; the potion heals to full', () => {
+    const { world } = setup();
+    const p = world.join('Tank', 'warrior');
+    atWizard(world, p);
+    p.coins = 50;
+    p.hp = 100;
+    expect(world.buy(p, 'armor')).toBe(true);
+    expect(maxHp('warrior', p.up)).toBe(220);
+    expect(p.hp).toBe(120);
+    expect(world.buy(p, 'potion')).toBe(true);
+    expect(p.hp).toBe(220);
+    expect(world.buy(p, 'potion')).toBe(false);
+  });
+
+  it('upgraded weapons hit harder', () => {
+    const plain = setup(), sharp = setup();
+    for (const { world, run, duel } of [plain, sharp]) {
+      const a = world.join('A', 'archer');
+      const b = world.join('B', 'warrior');
+      if (world === sharp.world) a.up.weapon = 3;
+      duel(a, b, 300);
+      run(TICK_DT * 4, (p) => (p === a ? { keys: Key.Primary, aim: 0 } : null));
+      run(400);
+    }
+    const lost = (w: World) => 200 - [...w.players.values()].find((p) => p.name === 'B')!.hp;
+    expect(lost(sharp.world)).toBeGreaterThan(lost(plain.world));
+  });
+
+  it('pays bounties and spills half the purse on death', () => {
+    const { world, run, duel } = setup();
+    const a = world.join('A', 'archer');
+    const b = world.join('B', 'archer');
+    b.coins = 9;
+    duel(a, b, 300);
+    run(4000, (p) => (p === a ? { keys: Key.Primary, aim: 0 } : null));
+    expect(b.alive).toBe(false);
+    expect(b.coins).toBe(5);
+    expect(world.drops.some((d) => d.value === 4)).toBe(true);
+    expect(a.coins).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('Samuel', () => {
+  it('turns up, steals coins, and gives them back when caught', () => {
+    let now = 1_000_000;
+    const sent: ServerMsg[] = [];
+    const world = new World({ send: () => {}, broadcast: (m) => sent.push(m) }, now, { botFill: 0 });
+    const p = world.join('Rich', 'warrior');
+    p.coins = 20;
+    let sam;
+    for (let t = 0; t < 200_000 && !sam; t += TICK_DT) {
+      now += TICK_DT;
+      world.tick(now);
+      world.flushEvents();
+      p.hp = 200;
+      sam = world.mobs.find((m) => m.kind === 'sam');
+    }
+    expect(sam).toBeTruthy();
+    expect(sent.some((m) => m.t === 'announce' && m.m.includes('Samuel'))).toBe(true);
+    // Stand still and let him come; he steals and runs.
+    world.mobs = [sam!];
+    p.shieldUntil = 0;
+    for (let t = 0; t < 30_000 && sam!.stolen === 0; t += TICK_DT) {
+      now += TICK_DT;
+      world.tick(now);
+      world.flushEvents();
+      world.mobs = world.mobs.filter((m) => m.kind === 'sam');
+      p.hp = 200;
+    }
+    expect(sam!.stolen).toBe(3);
+    expect(p.coins).toBe(17);
   });
 });
 
