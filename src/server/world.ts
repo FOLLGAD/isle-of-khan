@@ -109,6 +109,8 @@ export const BOT_FILL = 6;
 const BOT_TAUNTS = ['For the Khan!', 'Back to the sea with you.', 'gg', 'Too slow!', 'The isle is mine.', 'Hah!'];
 /** Bots with a catchphrase say it after most kills instead of a random taunt. */
 const BOT_CATCHPHRASES: Record<string, string> = { Jamukha: "That's what she said." };
+/** The bot who shows up in every game: first to join, last to leave. */
+const REGULAR = 'Jamukha';
 /** Chest height above the feet, where projectiles start and blasts are measured to. */
 const CHEST = 44;
 /** Snapshots include entities this far (world px) from the receiving player. */
@@ -695,17 +697,19 @@ export class World {
     const all = [...this.players.values()];
     const humans = all.filter((p) => !p.bot).length;
     const bots = all.filter((p) => p.bot);
-    const want = humans > 0 ? Math.max(0, this.botFill - humans) : 0;
+    // Jamukha is in every game, even when there are enough people that no other bots are needed.
+    const want = humans > 0 && this.botFill > 0 ? Math.max(1, this.botFill - humans) : 0;
     this.botTimer -= dt;
     if (bots.length > want) {
       // Make room for people: the weakest bot leaves first.
-      const leaving = bots.sort((a, b) => Number(a.alive) - Number(b.alive) || a.score - b.score)[0];
+      const leaving = bots.sort((a, b) =>
+        Number(a.name === REGULAR) - Number(b.name === REGULAR) || Number(a.alive) - Number(b.alive) || a.score - b.score)[0];
       this.leave(leaving.id);
     } else if (bots.length < want && this.botTimer <= 0) {
       this.botTimer = 1500;
       const taken = new Set(all.map((p) => p.name));
       const free = BOT_NAMES.filter((n) => !taken.has(n));
-      const name = free[Math.floor(this.rand() * free.length)] ?? `Bot ${bots.length + 1}`;
+      const name = free.includes(REGULAR) ? REGULAR : (free[Math.floor(this.rand() * free.length)] ?? `Bot ${bots.length + 1}`);
       this.join(name, this.botClass(), true);
     }
     for (const p of this.players.values()) {

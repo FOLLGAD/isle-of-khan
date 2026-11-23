@@ -232,6 +232,17 @@ describe('bots', () => {
     expect(world.players.size).toBe(6);
   });
 
+  it('always include Jamukha, even in a full room', () => {
+    const { world, run } = botWorld();
+    const people = Array.from({ length: 8 }, (_, i) => world.join(`P${i}`, 'archer'));
+    run(5000);
+    const bots = [...world.players.values()].filter((p) => p.bot);
+    expect(bots.map((p) => p.name)).toEqual(['Jamukha']);
+    for (const p of people.slice(1)) world.leave(p.id);
+    run(10_000);
+    expect([...world.players.values()].filter((p) => p.bot && p.name === 'Jamukha').length).toBe(1);
+  });
+
   it('roam, fight bogs and each other, and respawn', () => {
     const { world, run } = botWorld();
     const human = world.join('Human', 'warrior');
