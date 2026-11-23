@@ -133,6 +133,9 @@ export class BotBrain {
   readonly skill: number;
   respawnDelay = 0;
   private target: Target | null = null;
+  /** When this bot last greeted someone it spotted, for rate-limiting its greeting line. */
+  greetedAt = -Infinity;
+  private lastPlayerTarget = 0;
   private retargetAt = 0;
   private acquiredAt = 0;
   private path: { x: number; y: number }[] = [];
@@ -160,6 +163,14 @@ export class BotBrain {
     this.delay = 260 - this.skill * 140;
     this.strafe = rand() < 0.5 ? 1 : -1;
     this.weavePhase = rand() * Math.PI * 2;
+  }
+
+  /** The player this bot just started going after, if it switched to one this tick. */
+  newPlayerTarget(): number | null {
+    const id = this.target?.kind === 'player' ? this.target.id : 0;
+    if (id === this.lastPlayerTarget) return null;
+    this.lastPlayerTarget = id;
+    return id || null;
   }
 
   think(v: World, me: Player, tactics: Tactics): { keys: number; aim: number; dist: number } {

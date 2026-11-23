@@ -146,9 +146,11 @@ const BOUNTY = { kill: 2, khan: 3 };
 const HEAL = 25;
 /** Rooms are topped up with bots until there are this many fighters. */
 export const BOT_FILL = 6;
-const BOT_TAUNTS = ['For the Khan!', 'Back to the sea with you.', 'gg', 'Too slow!', 'The isle is mine.', 'Hah!'];
+const BOT_TAUNTS = ['For the Khan!', 'Back to the sea with you.', 'gg', 'Too slow!', 'The isle is mine.', 'Hah!', 'You fool!'];
 /** Bots with a catchphrase say it after most kills instead of a random taunt. */
 const BOT_CATCHPHRASES: Record<string, string> = { Jamukha: "That's what she said." };
+/** Bots with a greeting say it when they start going after someone, at most once a minute. */
+const BOT_GREETINGS: Record<string, string> = { Jamukha: 'Well, well, well, who do we have here...' };
 /** The bot who shows up in every game: first to join, last to leave. */
 const REGULAR = 'Jamukha';
 /** Chest height above the feet, where projectiles start and blasts are measured to. */
@@ -504,7 +506,7 @@ export class World {
     if (by?.bot && by !== t) {
       const catchphrase = BOT_CATCHPHRASES[by.name];
       if (catchphrase && this.rand() < 0.7) this.out.broadcast({ t: 'chat', from: by.name, m: catchphrase });
-      else if (this.rand() < (wasKhan ? 0.6 : 0.12)) this.out.broadcast({ t: 'chat', from: by.name, m: BOT_TAUNTS[Math.floor(this.rand() * BOT_TAUNTS.length)] });
+      else if (this.rand() < (wasKhan ? 0.6 : 0.2)) this.out.broadcast({ t: 'chat', from: by.name, m: BOT_TAUNTS[Math.floor(this.rand() * BOT_TAUNTS.length)] });
     }
     this.out.send(t.id, { t: 'dead', by: killer, respawnIn: RESPAWN_MS });
     this.rosterDirty = true;
@@ -889,6 +891,12 @@ export class World {
       // Bots shop whenever they're standing at the wizard with something worth buying.
       for (let wish = botWish(p); wish && this.buy(p, wish); wish = botWish(p));
       const intent = bot.think(this, p, this.tactics[p.cls]);
+      const greeting = BOT_GREETINGS[p.name];
+      const spotted = bot.newPlayerTarget();
+      if (greeting && spotted && this.now - bot.greetedAt > 60_000) {
+        bot.greetedAt = this.now;
+        this.out.broadcast({ t: 'chat', from: p.name, m: greeting });
+      }
       p.botAcc += dt;
       let first = true;
       while (p.botAcc >= SIM_DT) {
